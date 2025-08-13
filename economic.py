@@ -1,10 +1,13 @@
-import streamlit as st
-import pandas as pd
+import io
+import os
+import requests
 import numpy as np
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(layout="wide", page_title="Avanzamento economico €/h")
 
-# --- Tema chiaro forzato anche su mobile ---
+# Forza tema chiaro anche su mobile
 st.markdown("""
 <style>
 :root { color-scheme: light !important; }
@@ -18,87 +21,103 @@ header [data-testid="theme-toggle"]{ display:none; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 Avanzamento mensile €/h per Tecnico")
+st.title("📊 Avanzamento mensile €/h per Tecnico (da GitHub)")
 
-with st.expander("Carica i 4 file (Excel)"):
-    f_presenze   = st.file_uploader("1) Presenze.xlsx (colonne: Tecnico, Totale, facoltativa Data)", type=["xlsx"], key="presenze")
-    f_del_tim    = st.file_uploader("2) Delivery TIM.xlsx (colonne: Tecnico, Impianti espletati FTTH, Impianti espletati ≠ FTTH)", type=["xlsx"], key="del_tim")
-    f_ass_tim    = st.file_uploader("3) Assurance TIM.xlsx (colonne: Referente o Tecnico, ProduttiviCount)", type=["xlsx"], key="ass_tim")
-    f_del_of     = st.file_uploader("4) Delivery OF.xlsx (colonne: Tecnico, Impianti espletati)", type=["xlsx"], key="del_of")
+# =========================
+# CONFIG REPO (modifica qui)
+# =========================
+REPO_OWNER   = os.getenv("AE_REPO_OWNER",   "tuo-utente")     # es. "acme-org"
+REPO_NAME    = os.getenv("AE_REPO_NAME",    "tuo-repo")       # es. "euroirte-report"
+BRANCH       = os.getenv("AE_BRANCH",       "main")           # es. "main" o "prod"
+PATH_PRES    = os.getenv("AE_PATH_PRES",    "data/Presenze.xlsx")
+PATH_DEL_TIM = os.getenv("AE_PATH_DEL_TIM", "data/Delivery TIM.xlsx")
+PATH_ASS_TIM = os.getenv("AE_PATH_ASS_TIM", "data/Assurance TIM.xlsx")
+PATH_DEL_OF  = os.getenv("AE_PATH_DEL_OF",  "data/Delivery OF.xlsx")
 
-# --- Helper: trova una colonna data (facoltativo) e filtra per mese/anno ---
-def find_date_col(df):
+# Se il repo è PRIVATO, inserisci un token in st.secrets["GITHUB_TOKEN"]
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
+
+# Fattori economici (modificabili)
+F_DEL_TIM_FTTH = 100
+F_DEL_TIM_NON  = 40
+F_ASS_TIM      = 20
+F_DEL_OF       = 100
+
+def raw_url(path: str) -> str:
+    # usa raw.githubusercontent.com
+    return f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{path}"
+
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_excel_from_github(path: str) -> pd.DataFrame:
+    url = raw_url(path)
+    headers = {}
+    if GITHUB_TOKEN:
+        # Abilita accesso a repo privati con GitHub token
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+    r = requests.get(url, headers=headers, timeout=30)
+    r.raise_for_status()
+    # pandas legge da BytesIO
+    return pd.read_excel(io.BytesIO(r.content))
+
+def find_date_col(df: pd.DataFrame):
     if df is None: return None
-    # preferisci una colonna chiamata Data/Date
     for c in df.columns:
-        if str(c).strip().lower() in ("data","date"):
+        if str(c).strip().lower() in ("data", "date"):
             return c
-    # altrimenti prima colonna datetime
     for c in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[c]):
             return c
     return None
 
-def ensure_datetime(df, col):
+def ensure_datetime(df: pd.DataFrame, col: str) -> pd.DataFrame:
     if df is None or col is None: return df
-    df = df.copy()
-    if not pd.api.types.is_datetime64_any_dtype(df[col]):
-        df[col] = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
-    return df
+    dfx = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(dfx[col]):
+        dfx[col] = pd.to_datetime(dfx[col], dayfirst=True, errors="coerce")
+    return dfx
 
-def month_filter_ui(dfs):
-    # raccogli mesi disponibili da qualunque df che abbia una data
-    options = []
+def month_options(*dfs):
+    opts = []
     for df in dfs:
         if df is None: continue
-        col = find_date_col(df)
-        if col is None: continue
-        dfx = ensure_datetime(df, col)
-        if dfx[col].notna().any():
-            ms = dfx[col].dt.to_period("M").dropna().unique().astype(str).tolist()
-            options.extend(ms)
-    options = sorted(set(options))
-    if options:
-        sel = st.selectbox("📅 Filtra per mese (se i file hanno una colonna Data):", options, index=len(options)-1)
-        return sel
-    return None
+        c = find_date_col(df)
+        if c is None: continue
+        dfx = ensure_datetime(df, c)
+        if dfx[c].notna().any():
+            ms = dfx[c].dt.to_period("M").dropna().unique().astype(str).tolist()
+            opts.extend(ms)
+    return sorted(set(opts))
 
-# --- Loader robusto per i 4 file ---
-def load_xlsx(uploaded):
-    if uploaded is None: return None
-    try:
-        return pd.read_excel(uploaded)
-    except Exception as e:
-        st.error(f"Errore nel leggere {uploaded.name if hasattr(uploaded,'name') else 'file'}: {e}")
-        return None
-
-df_ore     = load_xlsx(f_presenze)
-df_del_tim = load_xlsx(f_del_tim)
-df_ass_tim = load_xlsx(f_ass_tim)
-df_del_of  = load_xlsx(f_del_of)
-
-# Filtro mese opzionale
-selected_period = month_filter_ui([df_ore, df_del_tim, df_ass_tim, df_del_of])
-
-def filter_by_period(df):
-    if df is None or selected_period is None: return df
-    col = find_date_col(df)
-    if col is None: return df
-    dfx = ensure_datetime(df, col)
-    per = pd.Period(selected_period, freq="M")
-    return dfx[dfx[col].dt.to_period("M") == per]
-
-df_ore     = filter_by_period(df_ore)
-df_del_tim = filter_by_period(df_del_tim)
-df_ass_tim = filter_by_period(df_ass_tim)
-df_del_of  = filter_by_period(df_del_of)
-
-if None in (df_ore, df_del_tim, df_ass_tim, df_del_of):
-    st.info("➡️ Carica tutti e quattro i file per vedere i risultati.")
+# Carica i 4 file direttamente dal repo
+try:
+    df_ore     = fetch_excel_from_github(PATH_PRES)
+    df_del_tim = fetch_excel_from_github(PATH_DEL_TIM)
+    df_ass_tim = fetch_excel_from_github(PATH_ASS_TIM)
+    df_del_of  = fetch_excel_from_github(PATH_DEL_OF)
+except Exception as e:
+    st.error(f"Errore nel caricamento dai raw GitHub: {e}")
     st.stop()
 
-# --- Normalizzazioni colonne/naming ---
-# Presenze: Tecnico, Totale (ore)
+# Filtro mese opzionale (se esistono colonne Data)
+options = month_options(df_ore, df_del_tim, df_ass_tim, df_del_of)
+selected_period = None
+if options:
+    selected_period = st.selectbox("📅 Mese (se disponibile nei file):", options, index=len(options)-1)
+
+def filter_period(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or not selected_period: return df
+    c = find_date_col(df)
+    if c is None: return df
+    dfx = ensure_datetime(df, c)
+    per = pd.Period(selected_period, freq="M")
+    return dfx[dfx[c].dt.to_period("M") == per]
+
+df_ore     = filter_period(df_ore)
+df_del_tim = filter_period(df_del_tim)
+df_ass_tim = filter_period(df_ass_tim)
+df_del_of  = filter_period(df_del_of)
+
+# --- Presenze: Tecnico, Totale (ore)
 df_ore = df_ore.rename(columns=lambda c: str(c).strip())
 if not {"Tecnico","Totale"}.issubset(df_ore.columns):
     st.error("Nel file Presenze servono le colonne: 'Tecnico' e 'Totale'.")
@@ -108,14 +127,16 @@ df_ore["tecnico"] = df_ore["tecnico"].astype(str).str.strip().str.lower()
 df_ore["ore_totali"] = pd.to_numeric(df_ore["ore_totali"], errors="coerce").fillna(0)
 df_ore = df_ore.groupby("tecnico", as_index=False)["ore_totali"].sum()
 
-# Delivery TIM: gestisci ≠ FTTH in varie grafie/encoding
+# --- Delivery TIM: colonne con varianti di "≠ FTTH"
 df_del_tim = df_del_tim.rename(columns=lambda c: str(c).strip())
 cols_map = {
     "Tecnico":"tecnico",
     "Impianti espletati FTTH":"del_tim_ftth",
     "Impianti espletati ≠ FTTH":"del_tim_non_ftth",
     "Impianti espletati != FTTH":"del_tim_non_ftth",
-    "Impianti espletati â‰  FTTH":"del_tim_non_ftth",  # mis-encoding frequente
+    "Impianti espletati â‰  FTTH":"del_tim_non_ftth",   # mis-encoding frequente
+    "Impianti espletati â‰ FTTH":"del_tim_non_ftth",
+    "Impianti espletati â‰  FTTH":"del_tim_non_ftth",
 }
 df_del_tim = df_del_tim.rename(columns=cols_map)
 need = {"tecnico","del_tim_ftth","del_tim_non_ftth"}
@@ -128,7 +149,7 @@ for c in ["del_tim_ftth","del_tim_non_ftth"]:
     df_del_tim[c] = pd.to_numeric(df_del_tim[c], errors="coerce").fillna(0)
 df_del_tim = df_del_tim.groupby("tecnico", as_index=False)[["del_tim_ftth","del_tim_non_ftth"]].sum()
 
-# Assurance TIM: Referente oppure Tecnico, ProduttiviCount
+# --- Assurance TIM: Referente oppure Tecnico + ProduttiviCount
 df_ass_tim = df_ass_tim.rename(columns=lambda c: str(c).strip())
 tec_col = "Referente" if "Referente" in df_ass_tim.columns else ("Tecnico" if "Tecnico" in df_ass_tim.columns else None)
 if tec_col is None or "ProduttiviCount" not in df_ass_tim.columns:
@@ -139,7 +160,7 @@ df_ass_tim["tecnico"] = df_ass_tim["tecnico"].astype(str).str.strip().str.lower(
 df_ass_tim["ass_tim"] = pd.to_numeric(df_ass_tim["ass_tim"], errors="coerce").fillna(0)
 df_ass_tim = df_ass_tim.groupby("tecnico", as_index=False)["ass_tim"].sum()
 
-# Delivery OF: Tecnico, Impianti espletati
+# --- Delivery OF: Tecnico + Impianti espletati
 df_del_of = df_del_of.rename(columns=lambda c: str(c).strip())
 if not {"Tecnico","Impianti espletati"}.issubset(df_del_of.columns):
     st.error("Nel file Delivery OF servono: 'Tecnico' e 'Impianti espletati'.")
@@ -149,27 +170,20 @@ df_del_of["tecnico"] = df_del_of["tecnico"].astype(str).str.strip().str.lower()
 df_del_of["del_of"] = pd.to_numeric(df_del_of["del_of"], errors="coerce").fillna(0)
 df_del_of = df_del_of.groupby("tecnico", as_index=False)["del_of"].sum()
 
-# --- Merge finale ---
+# --- Merge
 df = df_ore.merge(df_del_tim, on="tecnico", how="left") \
            .merge(df_ass_tim, on="tecnico", how="left") \
            .merge(df_del_of, on="tecnico", how="left") \
            .fillna(0)
 
-# --- Fattori economici ---
-F_DEL_TIM_FTTH   = 100
-F_DEL_TIM_NON    = 40
-F_ASS_TIM        = 20
-F_DEL_OF         = 100
-
-# --- Calcolo €/h (evita divisioni per zero) ---
+# --- Calcolo €/h
 ore = df["ore_totali"].replace(0, np.nan)
-df["Resa Delivery TIM FTTH"]     = (df["del_tim_ftth"]   * F_DEL_TIM_FTTH) / ore
-df["Resa Delivery TIM non FTTH"] = (df["del_tim_non_ftth"] * F_DEL_TIM_NON) / ore
-df["Resa Assurance TIM"]         = (df["ass_tim"]        * F_ASS_TIM) / ore
-df["Resa Delivery OF"]           = (df["del_of"]         * F_DEL_OF) / ore
+df["Resa Delivery TIM FTTH"]     = (df["del_tim_ftth"]     * F_DEL_TIM_FTTH) / ore
+df["Resa Delivery TIM non FTTH"] = (df["del_tim_non_ftth"] * F_DEL_TIM_NON)  / ore
+df["Resa Assurance TIM"]         = (df["ass_tim"]          * F_ASS_TIM)      / ore
+df["Resa Delivery OF"]           = (df["del_of"]           * F_DEL_OF)       / ore
 df = df.replace({np.nan: 0})
 
-# --- Output tabella richiesta ---
 df_out = df.rename(columns={"tecnico":"Nome Tecnico"})[
     ["Nome Tecnico","Resa Delivery TIM FTTH","Resa Delivery TIM non FTTH","Resa Assurance TIM","Resa Delivery OF"]
 ].sort_values("Nome Tecnico")
@@ -186,6 +200,13 @@ st.dataframe(
     hide_index=True
 )
 
-# Download CSV
+# Esporta CSV
 csv = df_out.to_csv(index=False).encode("utf-8")
 st.download_button("⬇️ Scarica CSV", data=csv, file_name="avanzamento_euro_ora.csv", mime="text/csv")
+
+# Info sorgenti
+with st.expander("Sorgenti GitHub"):
+    st.code(f"Presenze:      {raw_url(PATH_PRES)}", language="text")
+    st.code(f"Delivery TIM:  {raw_url(PATH_DEL_TIM)}", language="text")
+    st.code(f"Assurance TIM: {raw_url(PATH_ASS_TIM)}", language="text")
+    st.code(f"Delivery OF:   {raw_url(PATH_DEL_OF)}", language="text")
