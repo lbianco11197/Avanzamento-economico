@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import requests
 import numpy as np
 import pandas as pd
@@ -46,7 +47,6 @@ F_ASS_TIM      = 20
 F_DEL_OF       = 100
 
 def raw_url(path: str) -> str:
-    # usa raw.githubusercontent.com
     return f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{path}"
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -54,13 +54,12 @@ def fetch_excel_from_github(path: str) -> pd.DataFrame:
     url = raw_url(path)
     headers = {}
     if GITHUB_TOKEN:
-        # Abilita accesso a repo privati con GitHub token
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
-    # pandas legge da BytesIO
     return pd.read_excel(io.BytesIO(r.content))
 
+# ---------- Utilità per date ----------
 def find_date_col(df: pd.DataFrame):
     if df is None: return None
     for c in df.columns:
@@ -90,7 +89,7 @@ def month_options(*dfs):
             opts.extend(ms)
     return sorted(set(opts))
 
-# Carica i 4 file direttamente dal repo
+# ---------- Caricamento file ----------
 try:
     df_ore     = fetch_excel_from_github(PATH_PRES)
     df_del_tim = fetch_excel_from_github(PATH_DEL_TIM)
@@ -100,7 +99,7 @@ except Exception as e:
     st.error(f"Errore nel caricamento dai raw GitHub: {e}")
     st.stop()
 
-# Filtro mese opzionale (se esistono colonne Data)
+# ---------- Filtro mese opzionale ----------
 options = month_options(df_ore, df_del_tim, df_ass_tim, df_del_of)
 selected_period = None
 if options:
@@ -119,7 +118,7 @@ df_del_tim = filter_period(df_del_tim)
 df_ass_tim = filter_period(df_ass_tim)
 df_del_of  = filter_period(df_del_of)
 
-# --- Presenze: Tecnico, Totale (ore)
+# ---------- Presenze ----------
 df_ore = df_ore.rename(columns=lambda c: str(c).strip())
 if not {"Tecnico","Totale"}.issubset(df_ore.columns):
     st.error("Nel file Presenze servono le colonne: 'Tecnico' e 'Totale'.")
@@ -129,29 +128,81 @@ df_ore["tecnico"] = df_ore["tecnico"].astype(str).str.strip().str.lower()
 df_ore["ore_totali"] = pd.to_numeric(df_ore["ore_totali"], errors="coerce").fillna(0)
 df_ore = df_ore.groupby("tecnico", as_index=False)["ore_totali"].sum()
 
-# --- Delivery TIM: colonne con varianti di "≠ FTTH"
+# ---------- Delivery TIM: rilevamento robusto colonne FTTH / NON FTTH ----------
+def normalize(s: str) -> str:
+    s = str(s).lower()
+    s = s.replace("\u2260", "!=")   # ≠
+    s = s.replace("â‰", "!=")       # mis-encoding frequente
+    s = s.replace(" ftth", "ftth")
+    s = s.replace("≠", "!=")
+    s = s.replace("  ", " ")
+    s = re.sub(r"\s+", "", s)       # rimuovi spazi
+    s = re.sub(r"[^a-z0-9!=]", "", s)  # solo alfanum e ! =
+    return s
+
+def find_ftth_col(columns):
+    candidates = []
+    for col in columns:
+        n = normalize(col)
+        if "impiantiespletati" in n and "ftth" in n and "non" not in n and "!=" not in n:
+            candidates.append(col)
+    # fallback: qualunque col con ftth
+    if not candidates:
+        for col in columns:
+            n = normalize(col)
+            if "ftth" in n and "non" not in n and "!=" not in n:
+                candidates.append(col)
+    return candidates[0] if candidates else None
+
+def find_non_ftth_col(columns):
+    for col in columns:
+        n = normalize(col)
+        if ("impiantiespletati" in n and ("nonftth" in n or "!=ftth" in n)) or \
+           ("ftth" in n and ("nonftth" in n or "!=ftth" in n)):
+            return col
+    # Alcuni file usano "FTTC" per indicare non FTTH: prova last-resort
+    for col in columns:
+        n = normalize(col)
+        if "impiantiespletati" in n and "fttc" in n:
+            return col
+    return None
+
 df_del_tim = df_del_tim.rename(columns=lambda c: str(c).strip())
-cols_map = {
-    "Tecnico":"tecnico",
-    "Impianti espletati FTTH":"del_tim_ftth",
-    "Impianti espletati ≠ FTTH":"del_tim_non_ftth",
-    "Impianti espletati != FTTH":"del_tim_non_ftth",
-    "Impianti espletati â‰  FTTH":"del_tim_non_ftth",   # mis-encoding frequente
-    "Impianti espletati â‰ FTTH":"del_tim_non_ftth",
-    "Impianti espletati â‰  FTTH":"del_tim_non_ftth",
-}
-df_del_tim = df_del_tim.rename(columns=cols_map)
-need = {"tecnico","del_tim_ftth","del_tim_non_ftth"}
-miss = need - set(df_del_tim.columns)
-if miss:
-    st.error(f"Nel file Delivery TIM mancano colonne: {', '.join(miss)}")
+# Individua colonne
+tec_col = None
+for c in df_del_tim.columns:
+    if normalize(c) in ("tecnico",):
+        tec_col = c
+        break
+if tec_col is None and "Tecnico" in df_del_tim.columns:
+    tec_col = "Tecnico"
+if tec_col is None:
+    st.error("Nel file Delivery TIM manca la colonna 'Tecnico'.")
     st.stop()
+
+ftth_col = find_ftth_col(df_del_tim.columns)
+non_ftth_col = find_non_ftth_col(df_del_tim.columns)
+
+# Rinomina quanto trovato
+rename_map = {tec_col: "tecnico"}
+if ftth_col:     rename_map[ftth_col] = "del_tim_ftth"
+if non_ftth_col: rename_map[non_ftth_col] = "del_tim_non_ftth"
+df_del_tim = df_del_tim.rename(columns=rename_map)
+
+# Se mancano, crea colonne a 0 per proseguire senza errore
+if "del_tim_ftth" not in df_del_tim.columns:
+    st.warning("⚠️ Colonna FTTH non trovata in Delivery TIM: impostata a 0.")
+    df_del_tim["del_tim_ftth"] = 0
+if "del_tim_non_ftth" not in df_del_tim.columns:
+    st.warning("⚠️ Colonna NON FTTH non trovata in Delivery TIM: impostata a 0.")
+    df_del_tim["del_tim_non_ftth"] = 0
+
 df_del_tim["tecnico"] = df_del_tim["tecnico"].astype(str).str.strip().str.lower()
 for c in ["del_tim_ftth","del_tim_non_ftth"]:
     df_del_tim[c] = pd.to_numeric(df_del_tim[c], errors="coerce").fillna(0)
 df_del_tim = df_del_tim.groupby("tecnico", as_index=False)[["del_tim_ftth","del_tim_non_ftth"]].sum()
 
-# --- Assurance TIM: Referente oppure Tecnico + ProduttiviCount
+# ---------- Assurance TIM ----------
 df_ass_tim = df_ass_tim.rename(columns=lambda c: str(c).strip())
 tec_col = "Referente" if "Referente" in df_ass_tim.columns else ("Tecnico" if "Tecnico" in df_ass_tim.columns else None)
 if tec_col is None or "ProduttiviCount" not in df_ass_tim.columns:
@@ -162,7 +213,7 @@ df_ass_tim["tecnico"] = df_ass_tim["tecnico"].astype(str).str.strip().str.lower(
 df_ass_tim["ass_tim"] = pd.to_numeric(df_ass_tim["ass_tim"], errors="coerce").fillna(0)
 df_ass_tim = df_ass_tim.groupby("tecnico", as_index=False)["ass_tim"].sum()
 
-# --- Delivery OF: Tecnico + Impianti espletati
+# ---------- Delivery OF ----------
 df_del_of = df_del_of.rename(columns=lambda c: str(c).strip())
 if not {"Tecnico","Impianti espletati"}.issubset(df_del_of.columns):
     st.error("Nel file Delivery OF servono: 'Tecnico' e 'Impianti espletati'.")
@@ -172,13 +223,12 @@ df_del_of["tecnico"] = df_del_of["tecnico"].astype(str).str.strip().str.lower()
 df_del_of["del_of"] = pd.to_numeric(df_del_of["del_of"], errors="coerce").fillna(0)
 df_del_of = df_del_of.groupby("tecnico", as_index=False)["del_of"].sum()
 
-# --- Merge
+# ---------- Merge + calcoli ----------
 df = df_ore.merge(df_del_tim, on="tecnico", how="left") \
            .merge(df_ass_tim, on="tecnico", how="left") \
            .merge(df_del_of, on="tecnico", how="left") \
            .fillna(0)
 
-# --- Calcolo €/h
 ore = df["ore_totali"].replace(0, np.nan)
 df["Resa Delivery TIM FTTH"]     = (df["del_tim_ftth"]     * F_DEL_TIM_FTTH) / ore
 df["Resa Delivery TIM non FTTH"] = (df["del_tim_non_ftth"] * F_DEL_TIM_NON)  / ore
@@ -202,11 +252,9 @@ st.dataframe(
     hide_index=True
 )
 
-# Esporta CSV
 csv = df_out.to_csv(index=False).encode("utf-8")
 st.download_button("⬇️ Scarica CSV", data=csv, file_name="avanzamento_euro_ora.csv", mime="text/csv")
 
-# Info sorgenti
 with st.expander("Sorgenti GitHub"):
     st.code(f"Presenze:      {raw_url(PATH_PRES)}", language="text")
     st.code(f"Delivery TIM:  {raw_url(PATH_DEL_TIM)}", language="text")
