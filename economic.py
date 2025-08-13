@@ -24,15 +24,17 @@ header [data-testid="theme-toggle"]{ display:none; }
 st.title("📊 Avanzamento mensile €/h per Tecnico (da GitHub)")
 
 # =========================
-# CONFIG REPO (modifica qui)
+# CONFIG REPO (ADATTATA)
 # =========================
-REPO_OWNER   = os.getenv("AE_REPO_OWNER",   "tuo-utente")     # es. "acme-org"
-REPO_NAME    = os.getenv("AE_REPO_NAME",    "tuo-repo")       # es. "euroirte-report"
-BRANCH       = os.getenv("AE_BRANCH",       "main")           # es. "main" o "prod"
-PATH_PRES    = os.getenv("AE_PATH_PRES",    "data/Presenze.xlsx")
-PATH_DEL_TIM = os.getenv("AE_PATH_DEL_TIM", "data/Delivery TIM.xlsx")
-PATH_ASS_TIM = os.getenv("AE_PATH_ASS_TIM", "data/Assurance TIM.xlsx")
-PATH_DEL_OF  = os.getenv("AE_PATH_DEL_OF",  "data/Delivery OF.xlsx")
+REPO_OWNER   = "lbianco11197"
+REPO_NAME    = "Avanzamento-economico"
+BRANCH       = "main"
+
+# I file Excel sono nella root del repo con questi nomi:
+PATH_PRES    = "Presenze.xlsx"
+PATH_DEL_TIM = "Delivery TIM.xlsx"
+PATH_ASS_TIM = "Assurance TIM.xlsx"
+PATH_DEL_OF  = "Delivery OF.xlsx"
 
 # Se il repo è PRIVATO, inserisci un token in st.secrets["GITHUB_TOKEN"]
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
