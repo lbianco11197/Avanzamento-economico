@@ -66,10 +66,10 @@ st.link_button("🏠 Torna alla Home", url="https://homeeuroirte.streamlit.app/"
 
 # --- INSERISCI QUI I TUOI URL "RAW" DI GITHUB ---
 # Sostituisci queste stringhe di esempio con i tuoi link reali
-URL_PRESENZE = "https://github.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Presenze.xlsx"
-URL_DEL_TIM = "https://github.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Delivery%20TIM.xlsx"
-URL_ASS_TIM = "https://github.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Assurance%20TIM.xlsx"
-URL_DEL_OF = "https://github.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Delivery%20OF.xlsx"
+URL_PRESENZE = "https://raw.githubusercontent.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Presenze.xlsx"
+URL_DEL_TIM = "https://raw.githubusercontent.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Delivery%20TIM.xlsx"
+URL_ASS_TIM = "https://raw.githubusercontent.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Assurance%20TIM.xlsx"
+URL_DEL_OF = "https://raw.githubusercontent.com/lbianco11197/Avanzamento-economico/raw/refs/heads/main/Delivery%20OF.xlsx"
 # ----------------------------------------------------
 
 # Funzione per caricare un file da un URL, gestendo errori
