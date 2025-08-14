@@ -122,8 +122,7 @@ def fetch_excel_bytes_via_api():
         if isinstance(lst, list) and lst:
             iso = lst[0]["commit"]["committer"]["date"]
             try:
-                dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-                dt = dt + timedelta(hours=2)
+                dt = datetime.fromisoformat(iso.replace("Z", "+02:00"))
                 last_human = dt.strftime("%d/%m/%Y %H:%M")
             except Exception:
                 last_human = iso
