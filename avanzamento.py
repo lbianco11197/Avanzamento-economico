@@ -1,5 +1,6 @@
 import io
 import os
+import time
 import requests
 import pandas as pd
 import streamlit as st
@@ -11,18 +12,18 @@ from openpyxl import load_workbook
 REPO_OWNER = "lbianco11197"
 REPO_NAME  = "Avanzamento-economico"
 BRANCH     = "main"
-XLSX_PATH  = "Avanzamento.xlsx"
-SHEET_NAME = ""                               # "" = primo foglio
+XLSX_PATH  = "Avanzamento.xlsx"      # percorso e nome file esatto nel repo
+SHEET_NAME = ""                      # "" => primo foglio
 HOME_URL   = "https://homeeuroirte.streamlit.app/"
-LOGO_PATH  = "LogoEuroirte.jpg"               # se presente nel repo dell'app
+LOGO_PATH  = "LogoEuroirte.jpg"      # opzionale: presente nel repo dell'app
 
-# Se in Streamlit Cloud hai secrets, li usa (non necessari per repo pubblico)
+# Token opzionale (non serve per repo pubblico, utile contro rate limit)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
 
 PAGE_TITLE = "Avanzamento mensile €/h per Tecnico - Euroirte s.r.l."
 
-# --- Endpoints GitHub per versioning ---
-API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{XLSX_PATH}"
+# Endpoints GitHub
+API_URL  = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{XLSX_PATH}"
 RAW_BASE = "https://raw.githubusercontent.com"
 
 # =========================
@@ -30,7 +31,6 @@ RAW_BASE = "https://raw.githubusercontent.com"
 # =========================
 st.set_page_config(layout="wide", page_title=PAGE_TITLE, page_icon=":bar_chart:")
 
-# Tema chiaro + bordo nero selectbox
 st.markdown("""
 <style>
 :root { color-scheme: light !important; }
@@ -89,19 +89,29 @@ st.divider()
 # =========================
 # CACHE HELPERS
 # =========================
-@st.cache_data(show_spinner=False, ttl=60)
+@st.cache_data(show_spinner=False, ttl=30)
 def get_file_sha(ref: str = BRANCH) -> str:
-    """Ritorna lo SHA corrente del file su GitHub (cambia ad ogni upload/commit)."""
+    """
+    Prova a leggere lo SHA corrente del file via API GitHub.
+    Se fallisce (404/403/rate limit/etc.), usa un cache-buster temporale.
+    """
     headers = {"Accept": "application/vnd.github+json"}
     if GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
-    r = requests.get(API_URL, headers=headers, params={"ref": ref}, timeout=30)
-    r.raise_for_status()
-    return r.json()["sha"]
+    try:
+        r = requests.get(API_URL, headers=headers, params={"ref": ref}, timeout=30)
+        r.raise_for_status()
+        j = r.json()
+        sha = j.get("sha") if isinstance(j, dict) else None
+        return sha if sha else str(int(time.time()))
+    except requests.RequestException:
+        return str(int(time.time()))
 
 @st.cache_data(show_spinner=True)
 def load_avanzamento_df(version_sha: str) -> pd.DataFrame:
-    """Scarica Avanzamento.xlsx versionato con ?v=<sha>, legge i valori calcolati (data_only)."""
+    """
+    Scarica Avanzamento.xlsx versionato con ?v=<sha> e legge i VALORI calcolati (data_only=True).
+    """
     raw_url = f"{RAW_BASE}/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{XLSX_PATH}?v={version_sha}"
     headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
     if GITHUB_TOKEN:
@@ -147,18 +157,18 @@ def load_avanzamento_df(version_sha: str) -> pd.DataFrame:
         df = df[df["Tecnico"].notna() & (df["Tecnico"].astype(str).str.strip() != "")]
     return df.reset_index(drop=True)
 
-# Pulsante per refresh manuale
+# Pulsante refresh manuale (svuota cache Streamlit)
 cols = st.columns([0.2, 0.8])
 with cols[0]:
     if st.button("🔄 Aggiorna dati"):
         st.cache_data.clear()
 
-# Carica dati versionati
+# Carica dati versionati (SHA o timestamp fallback)
 version_sha = get_file_sha()
 df = load_avanzamento_df(version_sha)
 
 # =========================
-# SELECTBOX (senza default)
+# SELECTBOX (nessun default)
 # =========================
 PLACEHOLDER = "— Seleziona un tecnico —"
 tecnici = sorted(df["Tecnico"].astype(str).dropna().unique().tolist())
