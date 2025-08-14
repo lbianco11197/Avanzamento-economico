@@ -9,33 +9,6 @@ from openpyxl import load_workbook
 
 st.set_page_config(layout="wide")
 
-# Funzione per assegnare colore di sfondo in base alla logica semaforica
-def color_semaforo(val):
-    try:
-        v = float(val)
-    except (ValueError, TypeError):
-        return ""
-    if v < 25:
-        return "background-color: #ff4d4d;"  # rosso
-    elif 25 <= v <= 30:
-        return "background-color: #ffff99;"  # giallo
-    else:
-        return "background-color: #b3ffb3;"  # verde
-
-# Applica lo stile alla colonna 'Avanzamento €/h'
-styler = (
-    df_sel[["Tecnico", "Ore lavorate", "Avanzamento €/h"]]
-    .style
-    .format({
-        "Ore lavorate": "{:.2f}",
-        "Avanzamento €/h": "€{:.2f}/h",
-    })
-    .applymap(color_semaforo, subset=["Avanzamento €/h"])
-)
-
-st.subheader("Dettaglio")
-st.table(styler)
-
 # Imposta sfondo bianco e testo nero
 st.markdown("""
     <style>
@@ -222,4 +195,30 @@ st.dataframe(
     use_container_width=True,
     hide_index=True
 )
+# Funzione per assegnare colore di sfondo in base alla logica semaforica
+def color_semaforo(val):
+    try:
+        v = float(val)
+    except (ValueError, TypeError):
+        return ""
+    if v < 25:
+        return "background-color: #ff4d4d;"  # rosso
+    elif 25 <= v <= 30:
+        return "background-color: #ffff99;"  # giallo
+    else:
+        return "background-color: #b3ffb3;"  # verde
+
+# Applica lo stile alla colonna 'Avanzamento €/h'
+styler = (
+    df_sel[["Tecnico", "Ore lavorate", "Avanzamento €/h"]]
+    .style
+    .format({
+        "Ore lavorate": "{:.2f}",
+        "Avanzamento €/h": "€{:.2f}/h",
+    })
+    .applymap(color_semaforo, subset=["Avanzamento €/h"])
+)
+
+st.subheader("Dettaglio")
+st.table(styler)
 
