@@ -21,6 +21,8 @@ LOGO_PATH  = "LogoEuroirte.jpg"      # opzionale: presente nel repo dell'app
 
 # Token opzionale (consigliato per evitare rate limit API)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
+
+# DEBUG: mostra se il token è stato trovato
 st.write("Token trovato:", bool(GITHUB_TOKEN))
 
 
