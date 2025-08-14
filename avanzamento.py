@@ -17,15 +17,30 @@ st.markdown("""
         color: black !important;
     }
 
-    /* Stile menù a tendina (selectbox) con bordo colorato */
+   /* Stile menù a tendina (selectbox) con bordo nero */
 div[data-baseweb="select"] > div {
-  border: 2px solid #0d6efd !important;      /* colore bordo normale */
+  border: 2px solid #000000 !important;      /* bordo normale */
   border-radius: 8px !important;
   background: #fff !important;
 }
 
 div[data-baseweb="select"] > div:hover {
-  border-color: #0b5ed7 !important;          /* bordo più scuro in hover */
+  border-color: #000000 !important;          /* bordo hover */
+}
+
+div[data-baseweb="select"] > div:focus-within,
+div[data-baseweb="select"][aria-expanded="true"] > div {
+  border-color: #000000 !important;
+  box-shadow: 0 0 0 3px rgba(0,0,0,0.15) !important;  /* alone focus */
+}
+
+div[data-baseweb="select"] * {
+  color: #000000 !important;
+}
+
+div[data-baseweb="select"] svg {
+  stroke: #000000 !important;
+  fill: #000000 !important;
 }
 
 div[data-baseweb="select"] > div:focus-within,
