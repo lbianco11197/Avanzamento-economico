@@ -17,16 +17,31 @@ st.markdown("""
         color: black !important;
     }
 
-    /* Forza colore dei testi nei menu a discesa */
-    .stSelectbox div[data-baseweb="select"] {
-        background-color: white !important;
-        color: black !important;
-    }
+    /* Stile menù a tendina (selectbox) con bordo colorato */
+div[data-baseweb="select"] > div {
+  border: 2px solid #0d6efd !important;      /* colore bordo normale */
+  border-radius: 8px !important;
+  background: #fff !important;
+}
 
-    .stSelectbox span, .stSelectbox label {
-        color: black !important;
-        font-weight: 500;
-    }
+div[data-baseweb="select"] > div:hover {
+  border-color: #0b5ed7 !important;          /* bordo più scuro in hover */
+}
+
+div[data-baseweb="select"] > div:focus-within,
+div[data-baseweb="select"][aria-expanded="true"] > div {
+  border-color: #0a58ca !important;
+  box-shadow: 0 0 0 3px rgba(13,110,253,0.15) !important;
+}
+
+div[data-baseweb="select"] * {
+  color: #000 !important;
+}
+
+div[data-baseweb="select"] svg {
+  stroke: #0d6efd !important;
+  fill: #0d6efd !important;
+}
 
     /* Forza stile nelle tabelle */
     .stDataFrame, .stDataFrame table, .stDataFrame th, .stDataFrame td {
@@ -166,11 +181,3 @@ st.dataframe(
     hide_index=True
 )
 
-# Download CSV della riga/righe del tecnico
-csv = df_sel.to_csv(index=False).encode("utf-8")
-st.download_button("⬇️ Scarica CSV (tecnico selezionato)", data=csv,
-                   file_name=f"avanzamento_{selezionato}.csv", mime="text/csv")
-
-# Info sorgente
-with st.expander("Sorgente file"):
-    st.code(raw_url(XLSX_PATH), language="text")
