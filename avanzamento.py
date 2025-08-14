@@ -123,6 +123,7 @@ def fetch_excel_bytes_via_api():
             iso = lst[0]["commit"]["committer"]["date"]
             try:
                 dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                dt = dt + timedelta(hours=2)
                 last_human = dt.strftime("%d/%m/%Y %H:%M")
             except Exception:
                 last_human = iso
