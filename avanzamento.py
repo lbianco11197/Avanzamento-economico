@@ -120,7 +120,7 @@ def raw_url(path: str) -> str:
     from urllib.parse import quote
     return f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{quote(path)}"
 
-@st.cache_data(show_spinner=True, ttl=600)
+@st.cache_data(show_spinner=True, ttl=0)
 def load_avanzamento_df() -> pd.DataFrame:
     url = raw_url(XLSX_PATH)
     headers = {}
