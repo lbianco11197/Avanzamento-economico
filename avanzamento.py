@@ -6,7 +6,7 @@ import requests
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
-from datetime import timedelta
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -123,8 +123,7 @@ def fetch_excel_bytes_via_api():
             iso = lst[0]["commit"]["committer"]["date"]
             try:
                 dt = datetime.fromisoformat(iso.replace("Z", "+02:00"))
-                dt = dt + timedelta(hours=2)  # aggiungi 2 ore
-                last_human = dt.strftime("%d/%m/%Y %H:%M")
+                last_human = dt.strftime("%d/%m/%Y")
             except Exception:
                 last_human = iso
 
