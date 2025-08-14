@@ -1,10 +1,12 @@
 import io
 import os
 import time
+import base64
 import requests
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -12,19 +14,19 @@ from openpyxl import load_workbook
 REPO_OWNER = "lbianco11197"
 REPO_NAME  = "Avanzamento-economico"
 BRANCH     = "main"
-XLSX_PATH  = "Avanzamento.xlsx"      # percorso e nome file esatto nel repo
+XLSX_PATH  = "Avanzamento.xlsx"      # nome e percorso esatto nel repo
 SHEET_NAME = ""                      # "" => primo foglio
 HOME_URL   = "https://homeeuroirte.streamlit.app/"
 LOGO_PATH  = "LogoEuroirte.jpg"      # opzionale: presente nel repo dell'app
 
-# Token opzionale (non serve per repo pubblico, utile contro rate limit)
+# Token opzionale (consigliato per evitare rate limit API)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
 
 PAGE_TITLE = "Avanzamento mensile €/h per Tecnico - Euroirte s.r.l."
 
-# Endpoints GitHub
+# Endpoint API GitHub (NO CDN)
 API_URL  = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{XLSX_PATH}"
-RAW_BASE = "https://raw.githubusercontent.com"
+COMMITS_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
 
 # =========================
 # PAGE SETUP & THEME
@@ -89,37 +91,58 @@ st.divider()
 # =========================
 # CACHE HELPERS
 # =========================
-@st.cache_data(show_spinner=False, ttl=30)
-def get_file_sha(ref: str = BRANCH) -> str:
-    """
-    Prova a leggere lo SHA corrente del file via API GitHub.
-    Se fallisce (404/403/rate limit/etc.), usa un cache-buster temporale.
-    """
-    headers = {"Accept": "application/vnd.github+json"}
+def _headers():
+    h = {"Accept": "application/vnd.github+json"}
     if GITHUB_TOKEN:
-        headers["Authorization"] = f"token {GITHUB_TOKEN}"
-    try:
-        r = requests.get(API_URL, headers=headers, params={"ref": ref}, timeout=30)
-        r.raise_for_status()
-        j = r.json()
-        sha = j.get("sha") if isinstance(j, dict) else None
-        return sha if sha else str(int(time.time()))
-    except requests.RequestException:
-        return str(int(time.time()))
+        h["Authorization"] = f"token {GITHUB_TOKEN}"
+    return h
 
-@st.cache_data(show_spinner=True)
-def load_avanzamento_df(version_sha: str) -> pd.DataFrame:
+@st.cache_data(show_spinner=True, ttl=60)
+def fetch_excel_bytes_via_api():
     """
-    Scarica Avanzamento.xlsx versionato con ?v=<sha> e legge i VALORI calcolati (data_only=True).
+    Legge Avanzamento.xlsx direttamente dall'API GitHub (NO CDN).
+    Ritorna (sha, bytes, last_modified_human).
     """
-    raw_url = f"{RAW_BASE}/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{XLSX_PATH}?v={version_sha}"
-    headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"token {GITHUB_TOKEN}"
-    r = requests.get(raw_url, headers=headers, timeout=30)
+    # 1) Metadati + contenuto
+    r = requests.get(API_URL, headers=_headers(), params={"ref": BRANCH}, timeout=30)
     r.raise_for_status()
+    j = r.json()
 
-    bio = io.BytesIO(r.content)
+    sha = j.get("sha") or str(int(time.time()))
+    content = j.get("content")
+    encoding = j.get("encoding")
+    download_url = j.get("download_url")
+
+    # 2) Data ultimo commit sul file
+    r2 = requests.get(COMMITS_API, headers=_headers(),
+                      params={"path": XLSX_PATH, "per_page": 1, "sha": BRANCH}, timeout=30)
+    last_human = None
+    if r2.ok:
+        lst = r2.json()
+        if isinstance(lst, list) and lst:
+            iso = lst[0]["commit"]["committer"]["date"]
+            try:
+                dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+                last_human = dt.strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                last_human = iso
+
+    # 3) Decodifica (preferibilmente base64 dall'API)
+    if content and encoding == "base64":
+        data = base64.b64decode(content)
+        return sha, data, last_human
+
+    # Fallback: usa download_url (sempre API; niente raw CDN)
+    if download_url:
+        r3 = requests.get(download_url, timeout=30, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
+        r3.raise_for_status()
+        return sha, r3.content, last_human
+
+    raise RuntimeError("Impossibile ottenere il contenuto del file da GitHub.")
+
+def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
+    """Parsa l'Excel (valori calcolati dalle formule) e normalizza le 3 colonne richieste."""
+    bio = io.BytesIO(xls_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
     ws = wb[SHEET_NAME] if SHEET_NAME and SHEET_NAME in wb.sheetnames else wb[wb.sheetnames[0]]
 
@@ -157,15 +180,23 @@ def load_avanzamento_df(version_sha: str) -> pd.DataFrame:
         df = df[df["Tecnico"].notna() & (df["Tecnico"].astype(str).str.strip() != "")]
     return df.reset_index(drop=True)
 
-# Pulsante refresh manuale (svuota cache Streamlit)
+# Pulsante refresh manuale
 cols = st.columns([0.2, 0.8])
 with cols[0]:
     if st.button("🔄 Aggiorna dati"):
         st.cache_data.clear()
 
-# Carica dati versionati (SHA o timestamp fallback)
-version_sha = get_file_sha()
-df = load_avanzamento_df(version_sha)
+# Carica bytes via API e costruisci DataFrame
+try:
+    version_sha, xls_bytes, last_update_date = fetch_excel_bytes_via_api()
+    df = load_avanzamento_df_from_bytes(xls_bytes)
+except Exception as e:
+    st.error(f"Errore nel caricamento del file da GitHub: {e}")
+    st.stop()
+
+# Mostra data ultimo aggiornamento (da commit)
+if last_update_date:
+    st.caption(f"📅 Dati aggiornati al {last_update_date}")
 
 # =========================
 # SELECTBOX (nessun default)
