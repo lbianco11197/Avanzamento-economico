@@ -177,48 +177,49 @@ if df.empty:
     st.warning("Nessun dato trovato in Avanzamento.xlsx.")
     st.stop()
 
-# ---------------------------
-# UI: seleziona tecnico
-# ---------------------------
+# =======================
+# Selezione tecnico (no default)
+# =======================
+PLACEHOLDER = "— Seleziona un tecnico —"
 tecnici = sorted(df["Tecnico"].astype(str).dropna().unique().tolist())
-selezionato = st.selectbox("👷‍♂️ Seleziona un tecnico", tecnici)
+options = [PLACEHOLDER] + tecnici
 
-df_sel = df[df["Tecnico"].astype(str) == str(selezionato)].copy()
-
-# Format e tabella
-st.subheader("Dettaglio")
-st.dataframe(
-    df_sel.style.format({
-        "Ore lavorate": "{:.2f}",
-        "Avanzamento €/h": "€{:.2f}/h",
-    }),
-    use_container_width=True,
-    hide_index=True
+selezionato = st.selectbox(
+    "👷‍♂️ Seleziona un tecnico",
+    options,
+    index=0,  # nessun tecnico selezionato al primo avvio
 )
-# Funzione per assegnare colore di sfondo in base alla logica semaforica
+
+# =======================
+# Tabella con logica semaforica (mostra solo se scelto un tecnico)
+# =======================
 def color_semaforo(val):
     try:
         v = float(val)
     except (ValueError, TypeError):
         return ""
     if v < 25:
-        return "background-color: #ff4d4d;"  # rosso
+        return "background-color: #ff4d4d;"   # rosso
     elif 25 <= v <= 30:
-        return "background-color: #ffff99;"  # giallo
+        return "background-color: #ffff99;"   # giallo
     else:
-        return "background-color: #b3ffb3;"  # verde
+        return "background-color: #b3ffb3;"   # verde
 
-# Applica lo stile alla colonna 'Avanzamento €/h'
-styler = (
-    df_sel[["Tecnico", "Ore lavorate", "Avanzamento €/h"]]
-    .style
-    .format({
-        "Ore lavorate": "{:.2f}",
-        "Avanzamento €/h": "€{:.2f}/h",
-    })
-    .applymap(color_semaforo, subset=["Avanzamento €/h"])
-)
+if selezionato != PLACEHOLDER:
+    df_sel = df[df["Tecnico"].astype(str) == str(selezionato)][
+        ["Tecnico", "Ore lavorate", "Avanzamento €/h"]
+    ].copy()
 
-st.subheader("Dettaglio")
-st.table(styler)
+    styler = (
+        df_sel.style
+        .format({
+            "Ore lavorate": "{:.0f}",
+            "Avanzamento €/h": "€{:.2f}/h",
+        })
+        .applymap(color_semaforo, subset=["Avanzamento €/h"])
+    )
 
+    st.subheader("Dettaglio")
+    st.table(styler)
+else:
+    st.info("Seleziona un tecnico per visualizzare il dettaglio.")
