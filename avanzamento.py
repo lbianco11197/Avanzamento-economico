@@ -190,7 +190,7 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
       )
       # Rimuovi eventuali righe vuote dopo normalizzazione
       df = df[df["Tecnico"] != ""]
-     return df.reset_index(drop=True)
+    return df.reset_index(drop=True)
 
 # Pulsante refresh manuale
 cols = st.columns([0.2, 0.8])
