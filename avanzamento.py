@@ -178,7 +178,18 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
     df["Avanzamento €/h"] = pd.to_numeric(df["Avanzamento €/h"], errors="coerce")
     df = df.dropna(how="all")
     if "Tecnico" in df.columns:
-        df = df[df["Tecnico"].notna() & (df["Tecnico"].astype(str).str.strip() != "")]
+    # Elimina righe senza tecnico
+    df = df[df["Tecnico"].notna() & (df["Tecnico"].astype(str).str.strip() != "")]
+    
+    # Normalizza i nomi tecnici
+    df["Tecnico"] = (
+        df["Tecnico"].astype(str)
+        .str.strip()
+        .str.replace(r"\s+", " ", regex=True)
+        .str.upper()
+    )
+    # Rimuovi eventuali righe vuote dopo normalizzazione
+    df = df[df["Tecnico"] != ""]
     return df.reset_index(drop=True)
 
 # Pulsante refresh manuale
