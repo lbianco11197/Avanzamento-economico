@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
 from datetime import datetime
+from pathlib import Path
 
 # =========================
 # CONFIG
@@ -33,42 +34,53 @@ COMMITS_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
 # PAGE SETUP & THEME
 # =========================
 st.set_page_config(layout="wide", page_title=PAGE_TITLE, page_icon=":bar_chart:")
+set_page_background("sfondo.png")  # <— usa il PNG dello sfondo bianco con glow
 
-st.markdown("""
-<style>
-:root { color-scheme: light !important; }
-@media (prefers-color-scheme: dark){ :root { color-scheme: light !important; } }
-html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"],
-[data-testid="stHeader"], [data-testid="stSidebar"] {
-  background:#fff !important; color:#000 !important;
-}
+# --- SFONDO FULL-SCREEN: funzione riutilizzabile ---
+def set_page_background(image_path: str):
+    p = Path(image_path)
+    if not p.exists():
+        # tentativo robusto: cerca accanto al file corrente
+        alt = Path(__file__).parent / image_path
+        if alt.exists():
+            p = alt
+        else:
+            st.warning(f"Background non trovato: {image_path}")
+            return
 
-/* Selectbox con bordo nero */
-div[data-baseweb="select"] > div {
-  border: 2px solid #000 !important;
-  border-radius: 8px !important;
-  background: #fff !important;
-}
-div[data-baseweb="select"] > div:hover,
-div[data-baseweb="select"] > div:focus-within,
-div[data-baseweb="select"][aria-expanded="true"] > div {
-  border-color: #000 !important;
-  box-shadow: 0 0 0 3px rgba(0,0,0,0.12) !important;
-}
-div[data-baseweb="select"] * { color:#000 !important; }
-div[data-baseweb="select"] svg { stroke:#000 !important; fill:#000 !important; }
+    encoded = base64.b64encode(p.read_bytes()).decode()
+    css = f"""
+    <style>
+      [data-testid="stAppViewContainer"] {{
+        background: url("data:image/png;base64,{encoded}") center/cover no-repeat fixed;
+      }}
+      [data-testid="stHeader"], [data-testid="stSidebar"] {{
+        background-color: rgba(255,255,255,0.0) !important;
+      }}
+      html, body, [data-testid="stApp"] {{
+        color: #0b1320 !important;
+      }}
+      .stDataFrame, .stTable, .stSelectbox div[data-baseweb="select"],
+      .stTextInput, .stNumberInput, .stDateInput, .stMultiSelect,
+      .stRadio, .stCheckbox, .stSlider, .stFileUploader, .stTextArea {{
+        background-color: rgba(255,255,255,0.88) !important;
+        border-radius: 10px;
+        backdrop-filter: blur(0.5px);
+      }}
+      .stDataFrame table, .stDataFrame th, .stDataFrame td {{
+        color: #0b1320 !important;
+        background-color: rgba(255,255,255,0.0) !important;
+      }}
+      .stButton > button, .stDownloadButton > button, .stLinkButton > a {{
+        background-color: #ffffff !important;
+        color: #0b1320 !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px;
+      }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
-/* Bottoni */
-.stButton > button{
-  background:#fff !important; color:#000 !important;
-  border:1px solid #999 !important; border-radius:8px; padding:.5rem .9rem;
-}
-
-/* Tabelle */
-.stTable, .stDataFrame table, .stDataFrame th, .stDataFrame td { background:#fff !important; color:#000 !important; }
-header [data-testid="theme-toggle"]{ display:none; }
-</style>
-""", unsafe_allow_html=True)
 
 # =========================
 # HEADER
