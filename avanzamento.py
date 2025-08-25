@@ -17,7 +17,7 @@ BRANCH     = "main"
 XLSX_PATH  = "Avanzamento.xlsx"      # nome e percorso esatto nel repo
 SHEET_NAME = ""                      # "" => primo foglio
 HOME_URL   = "https://homeeuroirte.streamlit.app/"
-LOGO_PATH  = "LogoEuroirte.jpg"      # opzionale: presente nel repo dell'app
+LOGO_PATH  = "LogoEuroirte.png"      # opzionale: presente nel repo dell'app
 
 # Token opzionale (consigliato per evitare rate limit API)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
