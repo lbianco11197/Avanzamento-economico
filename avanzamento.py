@@ -34,7 +34,6 @@ COMMITS_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
 # PAGE SETUP & THEME
 # =========================
 st.set_page_config(layout="wide", page_title=PAGE_TITLE, page_icon=":bar_chart:")
-set_page_background("sfondo.png")  # <— usa il PNG dello sfondo bianco con glow
 
 # --- SFONDO FULL-SCREEN: funzione riutilizzabile ---
 def set_page_background(image_path: str):
@@ -100,6 +99,8 @@ with col_btn:
         st.markdown(f"[🏠 Torna alla Home]({HOME_URL})")
 
 st.divider()
+
+set_page_background("sfondo.png")  # <— usa il PNG dello sfondo bianco con glow
 
 # =========================
 # CACHE HELPERS
