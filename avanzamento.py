@@ -229,77 +229,103 @@ if last_update_date:
 import smtplib
 from email.mime.text import MIMEText
 
-# --- Config SMTP aziendale (leggi da Secrets: .streamlit/secrets.toml) ---
+# =========================
+# INVIO EMAIL MANUALE (STREAMLIT) — versione robusta
+# =========================
+import smtplib
+from email.mime.text import MIMEText
+
 SMTP_HOST = "mail.euroirte.it"
-SMTP_PORT = 465  # SSL/TLS
-SMTP_USER = st.secrets["SMTP_USER"]   # es: "noreply@euroirte.it"
-SMTP_PASS = st.secrets["SMTP_PASS"]   # password / app-password
+SMTP_PORT = 465
+SMTP_USER = st.secrets["SMTP_USER"]
+SMTP_PASS = st.secrets["SMTP_PASS"]
 SMTP_FROM = st.secrets.get("SMTP_FROM", SMTP_USER)
 MAIL_SUBJECT = "Aggiornamento settimanale"
 
-# Data di riferimento da mostrare nel testo (viene dal commit del file Excel)
 DATA_RIF = last_update_date or ""
 
 st.subheader("📧 Invio email personalizzate")
 
-if "Mail" not in df.columns:
-    st.error("Nel file Excel manca la colonna 'Mail'. Aggiungila per poter inviare i messaggi.")
+# — Debug utile: vedi esattamente come Streamlit sta leggendo le intestazioni
+st.caption("Colonne rilevate dal file:")
+st.write(list(df.columns))
+
+# Trova la colonna email in modo tollerante
+def _norm(s): return str(s).strip().replace("\u00a0"," ").strip().lower()  # trim + non-breaking space
+email_candidates = {"mail", "email", "e-mail", "posta"}
+email_col = next((c for c in df.columns if _norm(c) in email_candidates), None)
+
+if email_col is None:
+    st.error("Non trovo la colonna Email. Rinomina l'intestazione in 'Mail' (o 'Email').")
 else:
-    # Anteprima (prime 5)
-    anteprima = []
-    for _, r in df.head(5).iterrows():
-        nome = str(r.get("Tecnico", "")).strip()
-        data = r.get("Data aggiornamento", DATA_RIF)
-        avanz = r.get("Avanzamento", "")
-        ore   = r.get("Ore lavorate", "")
-        mail  = str(r.get("Mail", "")).strip()
-        corpo = (
-            f"Ciao {nome},\n\n"
-            f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
-            f"e il totale delle ore lavorate è {ore}.\n"
-        )
-        anteprima.append({"Destinatario": mail, "Messaggio": corpo})
+    # Copia “pulita” con nomi standardizzati solo per l’invio
+    work = df.copy()
 
-    st.caption("Anteprima (prime 5 righe del file)")
-    st.dataframe(pd.DataFrame(anteprima), use_container_width=True)
+    # Normalizza data (se presente la colonna)
+    if any(_norm(c).startswith("data") for c in work.columns):
+        data_col = next(c for c in work.columns if _norm(c).startswith("data"))
+        work[data_col] = pd.to_datetime(work[data_col], errors="coerce").dt.strftime("%d/%m/%Y")
+    else:
+        data_col = None
 
-    if st.button("✉️ Invia email a tutti"):
-        risultati = []
-        try:
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
-                server.login(SMTP_USER, SMTP_PASS)
-                for _, r in df.iterrows():
-                    to = str(r.get("Mail", "")).strip()
-                    if not to:
-                        risultati.append(("❌", "(manca Mail)"))
-                        continue
-                    nome = str(r.get("Tecnico", "")).strip()
-                    data = r.get("Data aggiornamento", DATA_RIF)
-                    avanz= r.get("Avanzamento", "")
-                    ore  = r.get("Ore lavorate", "")
-                    corpo = (
-                        f"Ciao {nome},\n\n"
-                        f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
-                        f"e il totale delle ore lavorate è {ore}.\n"
-                    )
-                    msg = MIMEText(corpo, "plain", "utf-8")
-                    msg["Subject"] = MAIL_SUBJECT
-                    msg["From"] = SMTP_FROM
-                    msg["To"] = to
-                    server.send_message(msg)
-                    risultati.append(("✅", to))
-            st.success(f"Email inviate: {sum(1 for s,_ in risultati if s=='✅')}")
-            st.write(pd.DataFrame(risultati, columns=["Stato","Destinatario"]))
-        except Exception as e:
-            st.error(f"Errore durante l'invio: {e}")
+    # Individua colonne chiave tollerando varianti
+    def find_col(candidates, default=None):
+        return next((c for c in work.columns if _norm(c) in {x.lower() for x in candidates}), default)
 
-# =========================
-# SELECTBOX (nessun default)
-# =========================
-PLACEHOLDER = "— Seleziona un tecnico —"
-tecnici = sorted(df["Tecnico"].astype(str).dropna().unique().tolist())
-options = [PLACEHOLDER] + tecnici
-selezionato = st.selectbox("👷‍♂️ Seleziona un tecnico", options, index=0)
+    tecnico_col = find_col({"tecnico"})
+    ore_col     = find_col({"ore lavorate", "ore"})
+    av_col      = find_col({"avanzamento", "avanzamento €/h", "avanzamento euro/ora"})
+    mail_col    = email_col  # già trovato sopra
+
+    if not all([tecnico_col, ore_col, av_col, mail_col]):
+        st.error("Controlla intestazioni: servono Tecnico, Ore lavorate, Avanzamento(€/h) ed Email.")
+    else:
+        # Anteprima (prime 5)
+        anteprima = []
+        for _, r in work.head(5).iterrows():
+            nome  = str(r.get(tecnico_col, "")).strip()
+            data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
+            avanz = r.get(av_col, "")
+            ore   = r.get(ore_col, "")
+            mail  = str(r.get(mail_col, "")).strip()
+            corpo = (
+                f"Ciao {nome},\n\n"
+                f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
+                f"e il totale delle ore lavorate è {ore}.\n"
+            )
+            anteprima.append({"Destinatario": mail, "Messaggio": corpo})
+        st.caption("Anteprima (prime 5 righe)")
+        st.dataframe(pd.DataFrame(anteprima), use_container_width=True)
+
+        if st.button("✉️ Invia email a tutti"):
+            risultati = []
+            try:
+                with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                    server.login(SMTP_USER, SMTP_PASS)
+                    for _, r in work.iterrows():
+                        to = str(r.get(mail_col, "")).strip()
+                        if not to:
+                            risultati.append(("❌", "(manca Email)"))
+                            continue
+                        nome  = str(r.get(tecnico_col, "")).strip()
+                        data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
+                        avanz = r.get(av_col, "")
+                        ore   = r.get(ore_col, "")
+                        corpo = (
+                            f"Ciao {nome},\n\n"
+                            f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
+                            f"e il totale delle ore lavorate è {ore}.\n"
+                        )
+                        msg = MIMEText(corpo, "plain", "utf-8")
+                        msg["Subject"] = MAIL_SUBJECT
+                        msg["From"] = SMTP_FROM
+                        msg["To"] = to
+                        server.send_message(msg)
+                        risultati.append(("✅", to))
+                st.success(f"Email inviate: {sum(1 for s,_ in risultati if s=='✅')}")
+                st.write(pd.DataFrame(risultati, columns=["Stato","Destinatario"]))
+            except Exception as e:
+                st.error(f"Errore durante l'invio: {e}")
 
 # =========================
 # TABELLA CON LOGICA SEMAFORICA
