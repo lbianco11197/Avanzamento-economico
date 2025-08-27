@@ -224,6 +224,76 @@ if last_update_date:
     st.caption(f"📅 Dati aggiornati al {last_update_date}")
 
 # =========================
+# INVIO EMAIL MANUALE (STREAMLIT)
+# =========================
+import smtplib
+from email.mime.text import MIMEText
+
+# --- Config SMTP aziendale (leggi da Secrets: .streamlit/secrets.toml) ---
+SMTP_HOST = "mail.euroirte.it"
+SMTP_PORT = 465  # SSL/TLS
+SMTP_USER = st.secrets["SMTP_USER"]   # es: "noreply@euroirte.it"
+SMTP_PASS = st.secrets["SMTP_PASS"]   # password / app-password
+SMTP_FROM = st.secrets.get("SMTP_FROM", SMTP_USER)
+MAIL_SUBJECT = "Aggiornamento settimanale"
+
+# Data di riferimento da mostrare nel testo (viene dal commit del file Excel)
+DATA_RIF = last_update_date or ""
+
+st.subheader("📧 Invio email personalizzate")
+
+if "Mail" not in df.columns:
+    st.error("Nel file Excel manca la colonna 'Mail'. Aggiungila per poter inviare i messaggi.")
+else:
+    # Anteprima (prime 5)
+    anteprima = []
+    for _, r in df.head(5).iterrows():
+        nome = str(r.get("Tecnico", "")).strip()
+        data = r.get("Data aggiornamento", DATA_RIF)
+        avanz = r.get("Avanzamento", "")
+        ore   = r.get("Ore lavorate", "")
+        mail  = str(r.get("Mail", "")).strip()
+        corpo = (
+            f"Ciao {nome},\n\n"
+            f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
+            f"e il totale delle ore lavorate è {ore}.\n"
+        )
+        anteprima.append({"Destinatario": mail, "Messaggio": corpo})
+
+    st.caption("Anteprima (prime 5 righe del file)")
+    st.dataframe(pd.DataFrame(anteprima), use_container_width=True)
+
+    if st.button("✉️ Invia email a tutti"):
+        risultati = []
+        try:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                server.login(SMTP_USER, SMTP_PASS)
+                for _, r in df.iterrows():
+                    to = str(r.get("Mail", "")).strip()
+                    if not to:
+                        risultati.append(("❌", "(manca Mail)"))
+                        continue
+                    nome = str(r.get("Tecnico", "")).strip()
+                    data = r.get("Data aggiornamento", DATA_RIF)
+                    avanz= r.get("Avanzamento", "")
+                    ore  = r.get("Ore lavorate", "")
+                    corpo = (
+                        f"Ciao {nome},\n\n"
+                        f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
+                        f"e il totale delle ore lavorate è {ore}.\n"
+                    )
+                    msg = MIMEText(corpo, "plain", "utf-8")
+                    msg["Subject"] = MAIL_SUBJECT
+                    msg["From"] = SMTP_FROM
+                    msg["To"] = to
+                    server.send_message(msg)
+                    risultati.append(("✅", to))
+            st.success(f"Email inviate: {sum(1 for s,_ in risultati if s=='✅')}")
+            st.write(pd.DataFrame(risultati, columns=["Stato","Destinatario"]))
+        except Exception as e:
+            st.error(f"Errore durante l'invio: {e}")
+
+# =========================
 # SELECTBOX (nessun default)
 # =========================
 PLACEHOLDER = "— Seleziona un tecnico —"
