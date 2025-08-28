@@ -238,32 +238,29 @@ options = [PLACEHOLDER] + tecnici
 selezionato = st.selectbox("👷‍♂️ Seleziona un tecnico", options, index=0)
 
 # =========================
-# INVIO EMAIL MANUALE (STREAMLIT) — versione robusta
+# INVIO EMAIL MANUALE (STREAMLIT) — versione pulita
 # =========================
 import smtplib
 from email.mime.text import MIMEText
 
 SMTP_HOST = "mail.euroirte.it"
 SMTP_PORT = 465
-SMTP_USER = st.secrets["SMTP_USER"]   # es: "noreply@euroirte.it"
-SMTP_PASS = st.secrets["SMTP_PASS"]   # password / app-password
+SMTP_USER = st.secrets["SMTP_USER"]
+SMTP_PASS = st.secrets["SMTP_PASS"]
 SMTP_FROM = st.secrets.get("SMTP_FROM", SMTP_USER)
 MAIL_SUBJECT = "Aggiornamento settimanale"
 DATA_RIF = last_update_date or ""
 
 st.subheader("📧 Invio email personalizzate")
-st.caption("Colonne rilevate dal file:")
-st.write(list(df.columns))
 
-# Normalizzazione rapida per confronto nomi colonna
+# Trova colonne
 def _norm(s): 
     return str(s).replace("\u00a0"," ").strip().lower()
 
-# Trova colonne chiave tollerando varianti
 email_col   = next((c for c in df.columns if _norm(c) in {"mail","email","e-mail"}), None)
 tecnico_col = next((c for c in df.columns if _norm(c) == "tecnico"), None)
 ore_col     = next((c for c in df.columns if _norm(c) in {"ore lavorate","orelavorate","ore"}), None)
-av_col      = next((c for c in df.columns if _norm(c) in {"avanzamento €/h","avanzamento€/h","avanzamento euro/ora"}), None)
+av_col      = next((c for c in df.columns if _norm(c).startswith("avanzamento")), None)
 data_col    = next((c for c in df.columns if _norm(c).startswith("data")), None)
 
 if email_col is None or tecnico_col is None or ore_col is None or av_col is None:
@@ -273,14 +270,17 @@ else:
     anteprima = []
     for _, r in df.head(5).iterrows():
         nome  = str(r.get(tecnico_col, "")).strip()
+        # Rimuovi prefisso ID tipo IRTE0000001 -
+        if len(nome) > 14:
+            nome = nome[14:].strip()
         data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
-        avanz = r.get(av_col, "")
-        ore   = r.get(ore_col, "")
+        avanz = r.get(av_col, 0)
+        ore   = r.get(ore_col, 0)
         to    = str(r.get(email_col, "")).strip()
         corpo = (
             f"Ciao {nome},\n\n"
-            f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
-            f"e il totale delle ore lavorate è {ore}.\n"
+            f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
+            f"e il totale delle ore lavorate è {ore:.0f}.\n"
         )
         anteprima.append({"Destinatario": to, "Messaggio": corpo})
     st.caption("Anteprima (prime 5 righe)")
@@ -297,13 +297,15 @@ else:
                         risultati.append(("❌", "(manca Mail)"))
                         continue
                     nome  = str(r.get(tecnico_col, "")).strip()
+                    if len(nome) > 14:
+                        nome = nome[14:].strip()
                     data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
-                    avanz = r.get(av_col, "")
-                    ore   = r.get(ore_col, "")
+                    avanz = r.get(av_col, 0)
+                    ore   = r.get(ore_col, 0)
                     corpo = (
                         f"Ciao {nome},\n\n"
-                        f"il tuo avanzamento economico aggiornato al {data} è di {avanz} €/h "
-                        f"e il totale delle ore lavorate è {ore}.\n"
+                        f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
+                        f"e il totale delle ore lavorate è {ore:.0f}.\n"
                     )
                     msg = MIMEText(corpo, "plain", "utf-8")
                     msg["Subject"] = MAIL_SUBJECT
