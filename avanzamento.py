@@ -8,6 +8,9 @@ import streamlit as st
 from openpyxl import load_workbook
 from datetime import datetime
 from pathlib import Path
+import smtplib
+from email.mime.text import MIMEText
+import re
 
 # =========================
 # CONFIG
@@ -15,17 +18,17 @@ from pathlib import Path
 REPO_OWNER = "lbianco11197"
 REPO_NAME  = "Avanzamento-economico"
 BRANCH     = "main"
-XLSX_PATH  = "Avanzamento.xlsx"      # nome e percorso esatto nel repo
+XLSX_PATH  = "Avanzamento.xlsx"      # nome e percorso nel repo
 SHEET_NAME = ""                      # "" => primo foglio
 HOME_URL   = "https://homeeuroirte.streamlit.app/"
-LOGO_PATH  = "LogoEuroirte.png"      # opzionale: presente nel repo dell'app
+LOGO_PATH  = "LogoEuroirte.png"      # opzionale, se presente accanto allo script
 
-# Token opzionale (consigliato per evitare rate limit API)
+# Token opzionale (consigliato per rate limit API)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN", None))
 
 PAGE_TITLE = "Avanzamento mensile €/h per Tecnico - Euroirte s.r.l."
 
-# Endpoint API GitHub (NO CDN)
+# Endpoint API GitHub
 API_URL  = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{XLSX_PATH}"
 COMMITS_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
 
@@ -38,14 +41,12 @@ st.set_page_config(layout="wide", page_title=PAGE_TITLE, page_icon=":bar_chart:"
 def set_page_background(image_path: str):
     p = Path(image_path)
     if not p.exists():
-        # tentativo robusto: cerca accanto al file corrente
         alt = Path(__file__).parent / image_path
         if alt.exists():
             p = alt
         else:
             st.warning(f"Background non trovato: {image_path}")
             return
-
     encoded = base64.b64encode(p.read_bytes()).decode()
     css = f"""
     <style>
@@ -79,8 +80,8 @@ def set_page_background(image_path: str):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# Imposta lo sfondo (metti il nome file che usi nel progetto)
-set_page_background("sfondo.png")  # usa il PNG dello sfondo bianco/soft con glow
+# Imposta lo sfondo (metti il nome del file che usi nel progetto)
+set_page_background("sfondo.png")  # immagine soft con glow
 
 # =========================
 # HEADER
@@ -113,10 +114,9 @@ def _headers():
 @st.cache_data(show_spinner=True, ttl=60)
 def fetch_excel_bytes_via_api():
     """
-    Legge Avanzamento.xlsx direttamente dall'API GitHub (NO CDN).
+    Legge Avanzamento.xlsx direttamente dall'API GitHub (no CDN).
     Ritorna (sha, bytes, last_modified_human).
     """
-    # 1) Metadati + contenuto
     r = requests.get(API_URL, headers=_headers(), params={"ref": BRANCH}, timeout=30)
     r.raise_for_status()
     j = r.json()
@@ -126,7 +126,6 @@ def fetch_excel_bytes_via_api():
     encoding = j.get("encoding")
     download_url = j.get("download_url")
 
-    # 2) Data ultimo commit sul file
     r2 = requests.get(COMMITS_API, headers=_headers(),
                       params={"path": XLSX_PATH, "per_page": 1, "sha": BRANCH}, timeout=30)
     last_human = None
@@ -140,12 +139,10 @@ def fetch_excel_bytes_via_api():
             except Exception:
                 last_human = iso
 
-    # 3) Decodifica (preferibilmente base64 dall'API)
     if content and encoding == "base64":
         data = base64.b64decode(content)
         return sha, data, last_human
 
-    # Fallback: usa download_url (sempre API; niente raw CDN)
     if download_url:
         r3 = requests.get(download_url, timeout=30, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
         r3.raise_for_status()
@@ -155,8 +152,8 @@ def fetch_excel_bytes_via_api():
 
 def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
     """
-    Parsa l'Excel (valori calcolati dalle formule) e **mantiene** anche
-    le colonne 'Mail' e 'Data aggiornamento' oltre a Tecnico, Ore lavorate, Avanzamento €/h.
+    Parsa l'Excel (valori calcolati) e **mantiene** 'Mail' e 'Data aggiornamento'
+    oltre a 'Tecnico', 'Ore lavorate', 'Avanzamento €/h'.
     """
     bio = io.BytesIO(xls_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
@@ -169,7 +166,7 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
     header = [str(h).strip() if h is not None else "" for h in rows[0]]
     df = pd.DataFrame(rows[1:], columns=header)
 
-    # --- Normalizzazione nomi colonne (includiamo Mail e Data) ---
+    # Normalizzazione nomi colonne
     rename_map = {}
     for c in df.columns:
         key = str(c).strip().lower().replace(" ", "")
@@ -185,20 +182,16 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
             rename_map[c] = "Mail"
     df = df.rename(columns=rename_map)
 
-    # --- Colonne minime che vogliamo tenere ---
     wanted = ["Tecnico", "Data aggiornamento", "Ore lavorate", "Avanzamento €/h", "Mail"]
     for w in wanted:
         if w not in df.columns:
             df[w] = None
 
-    # --- Tipi & pulizia ---
     df = df[wanted].copy()
     df["Ore lavorate"] = pd.to_numeric(df["Ore lavorate"], errors="coerce")
     df["Avanzamento €/h"] = pd.to_numeric(df["Avanzamento €/h"], errors="coerce")
-    # Data in gg/mm/aaaa se presente
     df["Data aggiornamento"] = pd.to_datetime(df["Data aggiornamento"], errors="coerce").dt.strftime("%d/%m/%Y")
 
-    # Pulizia Tecnico (come da tuo file)
     df = df.dropna(how="all")
     if "Tecnico" in df.columns:
         df = df[df["Tecnico"].notna() & (df["Tecnico"].astype(str).str.strip() != "")]
@@ -225,9 +218,10 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file da GitHub: {e}")
     st.stop()
 
-# Mostra data ultimo aggiornamento (da commit)
+# Data ultimo aggiornamento (da commit) + messaggio spostato qui
 if last_update_date:
     st.caption(f"📅 Dati aggiornati al {last_update_date}")
+st.info("Seleziona un tecnico per visualizzare il dettaglio.")
 
 # =========================
 # SELECTBOX (nessun default)
@@ -238,22 +232,44 @@ options = [PLACEHOLDER] + tecnici
 selezionato = st.selectbox("👷‍♂️ Seleziona un tecnico", options, index=0)
 
 # =========================
-# INVIO EMAIL MANUALE (STREAMLIT) — versione pulita
+# INVIO EMAIL MANUALE (robusto + diagnostica)
 # =========================
-import smtplib
-from email.mime.text import MIMEText
-
 SMTP_HOST = "mail.euroirte.it"
-SMTP_PORT = 465
-SMTP_USER = st.secrets["SMTP_USER"]
-SMTP_PASS = st.secrets["SMTP_PASS"]
-SMTP_FROM = st.secrets.get("SMTP_FROM", SMTP_USER)
-MAIL_SUBJECT = "Aggiornamento settimanale"
-DATA_RIF = last_update_date or ""
+MAIL_SUBJECT = "EUROIRTE - Avanzamento Economico"   # ← oggetto aggiornato
+
+SMTP_USER = str(st.secrets["SMTP_USER"]).strip()
+SMTP_PASS = str(st.secrets["SMTP_PASS"]).strip()
+SMTP_FROM = str(st.secrets.get("SMTP_FROM", SMTP_USER)).strip()
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 st.subheader("📧 Invio email personalizzate")
 
-# Trova colonne
+# Avviso se mittente diverso dall'utente
+if SMTP_FROM.lower() != SMTP_USER.lower():
+    st.warning(f"Attenzione: mittente ({SMTP_FROM}) diverso dall'utente SMTP ({SMTP_USER}). Alcuni server lo vietano.")
+
+# Tester rapido SMTP
+def _smtp_login_test():
+    try:
+        with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=20) as s:
+            s.noop()
+            s.login(SMTP_USER, SMTP_PASS)
+        return True, "Login OK via SSL (465)"
+    except Exception as e_ssl:
+        try:
+            with smtplib.SMTP(SMTP_HOST, 587, timeout=20) as s:
+                s.ehlo(); s.starttls(); s.ehlo()
+                s.login(SMTP_USER, SMTP_PASS)
+            return True, "Login OK via STARTTLS (587)"
+        except Exception as e_tls:
+            return False, f"Errore login.\nSSL465: {e_ssl}\nSTARTTLS587: {e_tls}"
+
+if st.button("🔍 Test connessione SMTP"):
+    ok, msg = _smtp_login_test()
+    (st.success if ok else st.error)(msg)
+
+# Trova colonne (nomi tolleranti)
 def _norm(s): 
     return str(s).replace("\u00a0"," ").strip().lower()
 
@@ -262,21 +278,21 @@ tecnico_col = next((c for c in df.columns if _norm(c) == "tecnico"), None)
 ore_col     = next((c for c in df.columns if _norm(c) in {"ore lavorate","orelavorate","ore"}), None)
 av_col      = next((c for c in df.columns if _norm(c).startswith("avanzamento")), None)
 data_col    = next((c for c in df.columns if _norm(c).startswith("data")), None)
+DATA_RIF = last_update_date or ""
 
 if email_col is None or tecnico_col is None or ore_col is None or av_col is None:
-    st.error("Servono almeno le colonne: 'Tecnico', 'Ore lavorate', 'Avanzamento €/h' e 'Mail'.")
+    st.error("Servono almeno: 'Tecnico', 'Ore lavorate', 'Avanzamento €/h' e 'Mail'.")
 else:
     # Anteprima (prime 5)
     anteprima = []
     for _, r in df.head(5).iterrows():
-        nome  = str(r.get(tecnico_col, "")).strip()
-        # Rimuovi prefisso ID tipo IRTE0000001 -
-        if len(nome) > 14:
+        nome = str(r.get(tecnico_col, "")).strip()
+        if len(nome) > 14:  # rimuovi prefisso tipo "IRTE0000001 - "
             nome = nome[14:].strip()
         data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
-        avanz = r.get(av_col, 0)
-        ore   = r.get(ore_col, 0)
-        to    = str(r.get(email_col, "")).strip()
+        avanz = float(pd.to_numeric(r.get(av_col, 0), errors="coerce") or 0)
+        ore   = float(pd.to_numeric(r.get(ore_col, 0), errors="coerce") or 0)
+        to    = ("" if pd.isna(r.get(email_col, "")) else str(r.get(email_col, ""))).strip()
         corpo = (
             f"Ciao {nome},\n\n"
             f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
@@ -286,22 +302,36 @@ else:
     st.caption("Anteprima (prime 5 righe)")
     st.dataframe(pd.DataFrame(anteprima), use_container_width=True)
 
+    # Invio
     if st.button("✉️ Invia email a tutti"):
         risultati = []
+        invalidi  = []
         try:
-            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            try:
+                server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
+                mode = "SSL465"
+            except Exception:
+                server = smtplib.SMTP(SMTP_HOST, 587, timeout=30)
+                server.ehlo(); server.starttls(); server.ehlo()
+                mode = "STARTTLS587"
+
+            with server:
                 server.login(SMTP_USER, SMTP_PASS)
                 for _, r in df.iterrows():
-                    to = str(r.get(email_col, "")).strip()
-                    if not to:
-                        risultati.append(("❌", "(manca Mail)"))
+                    raw_to = r.get(email_col, "")
+                    to = ("" if pd.isna(raw_to) else str(raw_to)).strip()
+                    to_l = to.lower()
+                    if (not to) or (to_l in {"nan", "none", "<na>", "na"}) or (not EMAIL_RE.match(to)):
+                        invalidi.append(str(raw_to))
                         continue
-                    nome  = str(r.get(tecnico_col, "")).strip()
+
+                    nome = str(r.get(tecnico_col, "")).strip()
                     if len(nome) > 14:
                         nome = nome[14:].strip()
                     data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
-                    avanz = r.get(av_col, 0)
-                    ore   = r.get(ore_col, 0)
+                    avanz = float(pd.to_numeric(r.get(av_col, 0), errors="coerce") or 0)
+                    ore   = float(pd.to_numeric(r.get(ore_col, 0), errors="coerce") or 0)
+
                     corpo = (
                         f"Ciao {nome},\n\n"
                         f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
@@ -311,10 +341,23 @@ else:
                     msg["Subject"] = MAIL_SUBJECT
                     msg["From"] = SMTP_FROM
                     msg["To"] = to
-                    server.send_message(msg)
-                    risultati.append(("✅", to))
-            st.success(f"Email inviate: {sum(1 for s,_ in risultati if s=='✅')}")
-            st.write(pd.DataFrame(risultati, columns=["Stato","Destinatario"]))
+
+                    refused = server.send_message(msg)
+                    if refused:
+                        for dest, info in refused.items():
+                            risultati.append(("❌", f"{dest} ({info[0]} {str(info[1])})"))
+                    else:
+                        risultati.append(("✅", to))
+
+            inviate = sum(1 for s,_ in risultati if s == "✅")
+            st.success(f"Inviate {inviate} email (modalità {mode}).")
+            if invalidi:
+                st.warning(f"Ignorati {len(invalidi)} destinatari con email non valida/assente.")
+                st.write(pd.DataFrame({"Email non valida": invalidi}))
+            st.write(pd.DataFrame(risultati, columns=["Stato", "Destinatario"]))
+
+        except smtplib.SMTPAuthenticationError as e:
+            st.error(f"Autenticazione fallita: {e}")
         except Exception as e:
             st.error(f"Errore durante l'invio: {e}")
 
@@ -337,17 +380,13 @@ if selezionato != PLACEHOLDER:
     df_sel = df[df["Tecnico"].astype(str) == str(selezionato)][
         ["Tecnico", "Ore lavorate", "Avanzamento €/h"]
     ].copy()
-
     styler = (
         df_sel.style
         .format({
-            "Ore lavorate": "{:.0f}",        # intero senza decimali
+            "Ore lavorate": "{:.0f}",
             "Avanzamento €/h": "€{:.2f}/h",
         })
         .applymap(color_semaforo, subset=["Avanzamento €/h"])
     )
-
     st.subheader("Dettaglio")
     st.table(styler)
-else:
-    st.info("Seleziona un tecnico per visualizzare il dettaglio.")
