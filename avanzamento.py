@@ -302,65 +302,77 @@ else:
     st.caption("Anteprima (prime 5 righe)")
     st.dataframe(pd.DataFrame(anteprima), use_container_width=True)
 
-    # Invio
-    if st.button("✉️ Invia email a tutti"):
-        risultati = []
-        invalidi  = []
+    # ---------- INVIO ----------
+if st.button("✉️ Invia email a tutti"):
+    risultati = []          # -> conterrà tuple: ("✅"/"❌", nome, email)
+    invalidi  = []          # -> conterrà tuple: (nome, email_originale)
+    try:
+        # tenta SSL465, poi fallback 587
         try:
-            try:
-                server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
-                mode = "SSL465"
-            except Exception:
-                server = smtplib.SMTP(SMTP_HOST, 587, timeout=30)
-                server.ehlo(); server.starttls(); server.ehlo()
-                mode = "STARTTLS587"
+            server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
+            mode = "SSL465"
+        except Exception:
+            server = smtplib.SMTP(SMTP_HOST, 587, timeout=30)
+            server.ehlo(); server.starttls(); server.ehlo()
+            mode = "STARTTLS587"
 
-            with server:
-                server.login(SMTP_USER, SMTP_PASS)
-                for _, r in df.iterrows():
-                    raw_to = r.get(email_col, "")
-                    to = ("" if pd.isna(raw_to) else str(raw_to)).strip()
-                    to_l = to.lower()
-                    if (not to) or (to_l in {"nan", "none", "<na>", "na"}) or (not EMAIL_RE.match(to)):
-                        invalidi.append(str(raw_to))
-                        continue
+        with server:
+            server.login(SMTP_USER, SMTP_PASS)
+            for _, r in df.iterrows():
+                # nome tecnico (senza prefisso)
+                nome = str(r.get(tecnico_col, "")).strip()
+                if len(nome) > 14:
+                    nome = nome[14:].strip()
 
-                    nome = str(r.get(tecnico_col, "")).strip()
-                    if len(nome) > 14:
-                        nome = nome[14:].strip()
-                    data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
-                    avanz = float(pd.to_numeric(r.get(av_col, 0), errors="coerce") or 0)
-                    ore   = float(pd.to_numeric(r.get(ore_col, 0), errors="coerce") or 0)
+                # email raw + normalizzazione
+                raw_to = r.get(email_col, "")
+                to = ("" if pd.isna(raw_to) else str(raw_to)).strip()
+                to_l = to.lower()
 
-                    corpo = (
-                        f"Ciao {nome},\n\n"
-                        f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
-                        f"e il totale delle ore lavorate è {ore:.0f}.\n"
-                    )
-                    msg = MIMEText(corpo, "plain", "utf-8")
-                    msg["Subject"] = MAIL_SUBJECT
-                    msg["From"] = SMTP_FROM
-                    msg["To"] = to
+                # valida email: se non valida, accoda con NOME e continua
+                if (not to) or (to_l in {"nan", "none", "<na>", "na"}) or (not EMAIL_RE.match(to)):
+                    invalidi.append((nome, str(raw_to)))
+                    continue
 
-                    refused = server.send_message(msg)
-                    if refused:
-                        for dest, info in refused.items():
-                            risultati.append(("❌", f"{dest} ({info[0]} {str(info[1])})"))
-                    else:
-                        risultati.append(("✅", to))
+                # dati messaggio
+                data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
+                avanz = float(pd.to_numeric(r.get(av_col, 0), errors="coerce") or 0)
+                ore   = float(pd.to_numeric(r.get(ore_col, 0), errors="coerce") or 0)
 
-            inviate = sum(1 for s,_ in risultati if s == "✅")
-            st.success(f"Inviate {inviate} email (modalità {mode}).")
-            if invalidi:
-                st.warning(f"Ignorati {len(invalidi)} destinatari con email non valida/assente.")
-                st.write(pd.DataFrame({"Email non valida": invalidi}))
-            st.write(pd.DataFrame(risultati, columns=["Stato", "Destinatario"]))
+                corpo = (
+                    f"Ciao {nome},\n\n"
+                    f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
+                    f"e il totale delle ore lavorate è {ore:.0f}.\n"
+                )
+                msg = MIMEText(corpo, "plain", "utf-8")
+                msg["Subject"] = MAIL_SUBJECT
+                msg["From"] = SMTP_FROM
+                msg["To"] = to
 
-        except smtplib.SMTPAuthenticationError as e:
-            st.error(f"Autenticazione fallita: {e}")
-        except Exception as e:
-            st.error(f"Errore durante l'invio: {e}")
+                refused = server.send_message(msg)
+                if refused:
+                    # rifiuti dal server: mostriamo nome + motivo
+                    for dest, info in refused.items():
+                        risultati.append(("❌", nome, f"{dest} ({info[0]} {str(info[1])})"))
+                else:
+                    risultati.append(("✅", nome, to))
 
+        # riepilogo
+        inviate = sum(1 for s,_,_ in risultati if s == "✅")
+        st.success(f"Inviate {inviate} email (modalità {mode}).")
+
+        if invalidi:
+            st.warning(f"Ignorati {len(invalidi)} destinatari con email non valida/assente.")
+            df_invalidi = pd.DataFrame(invalidi, columns=["Tecnico", "Email non valida"])
+            st.dataframe(df_invalidi, use_container_width=True)
+
+        df_ris = pd.DataFrame(risultati, columns=["Stato", "Tecnico", "Destinatario"])
+        st.dataframe(df_ris, use_container_width=True)
+
+    except smtplib.SMTPAuthenticationError as e:
+        st.error(f"Autenticazione fallita: {e}")
+    except Exception as e:
+        st.error(f"Errore durante l'invio: {e}")
 # =========================
 # TABELLA CON LOGICA SEMAFORICA
 # =========================
