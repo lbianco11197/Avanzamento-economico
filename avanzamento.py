@@ -1,4 +1,4 @@
-import io
+mport io
 import os
 import time
 import base64
@@ -37,15 +37,15 @@ COMMITS_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
 # =========================
 st.set_page_config(layout="wide", page_title=PAGE_TITLE, page_icon=":bar_chart:")
 
-# --- SFONDO FULL-SCREEN: funzione riutilizzabile ---
-def set_page_background(image_path: str):
+# --- SFONDO FULL-SCREEN + BORDI INPUT ---
+def set_page_background(image_path: str = "sfondo.png"):
     p = Path(image_path)
     if not p.exists():
         alt = Path(__file__).parent / image_path
         if alt.exists():
             p = alt
         else:
-            st.warning(f"Background non trovato: {image_path}")
+            st.warning(f"Immagine di sfondo non trovata: {image_path}")
             return
     encoded = base64.b64encode(p.read_bytes()).decode()
     css = f"""
@@ -59,13 +59,23 @@ def set_page_background(image_path: str):
       html, body, [data-testid="stApp"] {{
         color: #0b1320 !important;
       }}
-      .stDataFrame, .stTable, .stSelectbox div[data-baseweb="select"],
+
+      /* INPUT & SELECT con bordo grigio chiaro */
+      .stDataFrame, .stTable,
       .stTextInput, .stNumberInput, .stDateInput, .stMultiSelect,
       .stRadio, .stCheckbox, .stSlider, .stFileUploader, .stTextArea {{
         background-color: rgba(255,255,255,0.88) !important;
         border-radius: 10px;
         backdrop-filter: blur(0.5px);
+        border: 1px solid #ddd !important;
       }}
+      /* Selectbox (menu a tendina) con bordo #ddd */
+      .stSelectbox div[data-baseweb="select"] {{
+        background-color: rgba(255,255,255,0.88) !important;
+        border-radius: 10px;
+        border: 1px solid #ddd !important;   /* 👈 bordo grigio chiaro */
+      }}
+
       .stDataFrame table, .stDataFrame th, .stDataFrame td {{
         color: #0b1320 !important;
         background-color: rgba(255,255,255,0.0) !important;
@@ -73,15 +83,18 @@ def set_page_background(image_path: str):
       .stButton > button, .stDownloadButton > button, .stLinkButton > a {{
         background-color: #ffffff !important;
         color: #0b1320 !important;
-        border: 1px solid #cbd5e1 !important;
+        border: 1px solid #ddd !important;
         border-radius: 8px;
+      }}
+      .stButton > button:hover, .stLinkButton > a:hover {{
+        background-color: #f3f4f6 !important;
       }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# Imposta lo sfondo (metti il nome del file che usi nel progetto)
-set_page_background("sfondo.png")  # immagine soft con glow
+# Imposta lo sfondo
+set_page_background("sfondo.png")
 
 # =========================
 # HEADER
@@ -103,7 +116,7 @@ with col_btn:
 st.divider()
 
 # =========================
-# CACHE HELPERS
+# CACHE HELPERS (GitHub)
 # =========================
 def _headers():
     h = {"Accept": "application/vnd.github+json"}
@@ -124,7 +137,6 @@ def fetch_excel_bytes_via_api():
     sha = j.get("sha") or str(int(time.time()))
     content = j.get("content")
     encoding = j.get("encoding")
-    download_url = j.get("download_url")
 
     r2 = requests.get(COMMITS_API, headers=_headers(),
                       params={"path": XLSX_PATH, "per_page": 1, "sha": BRANCH}, timeout=30)
@@ -143,6 +155,7 @@ def fetch_excel_bytes_via_api():
         data = base64.b64decode(content)
         return sha, data, last_human
 
+    download_url = j.get("download_url")
     if download_url:
         r3 = requests.get(download_url, timeout=30, headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
         r3.raise_for_status()
@@ -204,7 +217,7 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
         df = df[df["Tecnico"] != ""]
     return df.reset_index(drop=True)
 
-# Pulsante refresh manuale
+# Pulsante refresh
 cols = st.columns([0.2, 0.8])
 with cols[0]:
     if st.button("🔄 Aggiorna dati"):
@@ -218,24 +231,54 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file da GitHub: {e}")
     st.stop()
 
-# Data ultimo aggiornamento (da commit) + messaggio spostato qui
+# Data ultimo aggiornamento (da commit)
 if last_update_date:
     st.caption(f"📅 Dati aggiornati al {last_update_date}")
 st.info("Seleziona un tecnico per visualizzare il dettaglio.")
 
 # =========================
-# SELECTBOX (nessun default)
+# SELECTBOX (nessun default) + DETTAGLIO SUBITO SOTTO
 # =========================
 PLACEHOLDER = "— Seleziona un tecnico —"
 tecnici = sorted(df["Tecnico"].astype(str).dropna().unique().tolist())
 options = [PLACEHOLDER] + tecnici
 selezionato = st.selectbox("👷‍♂️ Seleziona un tecnico", options, index=0)
 
+# 🔹 DETTAGLIO TECNICO: SUBITO SOTTO LA TENDINA
+def color_semaforo(val):
+    try:
+        v = float(val)
+    except (ValueError, TypeError):
+        return ""
+    if v < 25:
+        return "background-color: #ff4d4d;"   # rosso
+    elif 25 <= v <= 30:
+        return "background-color: #ffff99;"   # giallo
+    else:
+        return "background-color: #b3ffb3;"   # verde
+
+if selezionato != PLACEHOLDER:
+    df_sel = df[df["Tecnico"].astype(str) == str(selezionato)][
+        ["Tecnico", "Ore lavorate", "Avanzamento €/h"]
+    ].copy()
+    styler = (
+        df_sel.style
+        .format({
+            "Ore lavorate": "{:.0f}",
+            "Avanzamento €/h": "€{:.2f}/h",
+        })
+        .applymap(color_semaforo, subset=["Avanzamento €/h"])
+    )
+    st.subheader("Dettaglio")
+    st.table(styler)
+
+st.divider()
+
 # =========================
 # INVIO EMAIL MANUALE (robusto + diagnostica)
 # =========================
 SMTP_HOST = "mail.euroirte.it"
-MAIL_SUBJECT = "EUROIRTE - Avanzamento Economico"   # ← oggetto aggiornato
+MAIL_SUBJECT = "EUROIRTE - Avanzamento Economico"
 
 SMTP_USER = str(st.secrets["SMTP_USER"]).strip()
 SMTP_PASS = str(st.secrets["SMTP_PASS"]).strip()
@@ -303,102 +346,73 @@ else:
     st.dataframe(pd.DataFrame(anteprima), use_container_width=True)
 
     # ---------- INVIO ----------
-if st.button("✉️ Invia email a tutti"):
-    risultati = []          # -> conterrà tuple: ("✅"/"❌", nome, email)
-    invalidi  = []          # -> conterrà tuple: (nome, email_originale)
-    try:
-        # tenta SSL465, poi fallback 587
+    if st.button("✉️ Invia email a tutti"):
+        risultati = []          # ("✅"/"❌", nome, email/info)
+        invalidi  = []          # (nome, email_originale)
         try:
-            server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
-            mode = "SSL465"
-        except Exception:
-            server = smtplib.SMTP(SMTP_HOST, 587, timeout=30)
-            server.ehlo(); server.starttls(); server.ehlo()
-            mode = "STARTTLS587"
+            # tenta SSL465, poi fallback 587
+            try:
+                server = smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30)
+                mode = "SSL465"
+            except Exception:
+                server = smtplib.SMTP(SMTP_HOST, 587, timeout=30)
+                server.ehlo(); server.starttls(); server.ehlo()
+                mode = "STARTTLS587"
 
-        with server:
-            server.login(SMTP_USER, SMTP_PASS)
-            for _, r in df.iterrows():
-                # nome tecnico (senza prefisso)
-                nome = str(r.get(tecnico_col, "")).strip()
-                if len(nome) > 14:
-                    nome = nome[14:].strip()
+            with server:
+                server.login(SMTP_USER, SMTP_PASS)
+                for _, r in df.iterrows():
+                    # nome tecnico (senza prefisso)
+                    nome = str(r.get(tecnico_col, "")).strip()
+                    if len(nome) > 14:
+                        nome = nome[14:].strip()
 
-                # email raw + normalizzazione
-                raw_to = r.get(email_col, "")
-                to = ("" if pd.isna(raw_to) else str(raw_to)).strip()
-                to_l = to.lower()
+                    # email raw + normalizzazione
+                    raw_to = r.get(email_col, "")
+                    to = ("" if pd.isna(raw_to) else str(raw_to)).strip()
+                    to_l = to.lower()
 
-                # valida email: se non valida, accoda con NOME e continua
-                if (not to) or (to_l in {"nan", "none", "<na>", "na"}) or (not EMAIL_RE.match(to)):
-                    invalidi.append((nome, str(raw_to)))
-                    continue
+                    # valida email
+                    if (not to) or (to_l in {"nan", "none", "<na>", "na"}) or (not EMAIL_RE.match(to)):
+                        invalidi.append((nome, str(raw_to)))
+                        continue
 
-                # dati messaggio
-                data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
-                avanz = float(pd.to_numeric(r.get(av_col, 0), errors="coerce") or 0)
-                ore   = float(pd.to_numeric(r.get(ore_col, 0), errors="coerce") or 0)
+                    # dati messaggio
+                    data  = str(r.get(data_col, DATA_RIF)) if data_col else DATA_RIF
+                    avanz = float(pd.to_numeric(r.get(av_col, 0), errors="coerce") or 0)
+                    ore   = float(pd.to_numeric(r.get(ore_col, 0), errors="coerce") or 0)
 
-                corpo = (
-                    f"Ciao {nome},\n\n"
-                    f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
-                    f"e il totale delle ore lavorate è {ore:.0f}.\n"
-                )
-                msg = MIMEText(corpo, "plain", "utf-8")
-                msg["Subject"] = MAIL_SUBJECT
-                msg["From"] = SMTP_FROM
-                msg["To"] = to
+                    corpo = (
+                        f"Ciao {nome},\n\n"
+                        f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
+                        f"e il totale delle ore lavorate è {ore:.0f}.\n"
+                    )
+                    msg = MIMEText(corpo, "plain", "utf-8")
+                    msg["Subject"] = MAIL_SUBJECT
+                    msg["From"] = SMTP_FROM
+                    msg["To"] = to
 
-                refused = server.send_message(msg)
-                if refused:
-                    # rifiuti dal server: mostriamo nome + motivo
-                    for dest, info in refused.items():
-                        risultati.append(("❌", nome, f"{dest} ({info[0]} {str(info[1])})"))
-                else:
-                    risultati.append(("✅", nome, to))
+                    refused = server.send_message(msg)
+                    if refused:
+                        # rifiuti dal server: mostriamo nome + motivo
+                        for dest, info in refused.items():
+                            risultati.append(("❌", nome, f"{dest} ({info[0]} {str(info[1])})"))
+                    else:
+                        risultati.append(("✅", nome, to))
 
-        # riepilogo
-        inviate = sum(1 for s,_,_ in risultati if s == "✅")
-        st.success(f"Inviate {inviate} email (modalità {mode}).")
+            # riepilogo
+            inviate = sum(1 for s,_,_ in risultati if s == "✅")
+            st.success(f"Inviate {inviate} email (modalità {mode}).")
 
-        if invalidi:
-            st.warning(f"Ignorati {len(invalidi)} destinatari con email non valida/assente.")
-            df_invalidi = pd.DataFrame(invalidi, columns=["Tecnico", "Email non valida"])
-            st.dataframe(df_invalidi, use_container_width=True)
+            if invalidi:
+                st.warning(f"Ignorati {len(invalidi)} destinatari con email non valida/assente.")
+                df_invalidi = pd.DataFrame(invalidi, columns=["Tecnico", "Email non valida"])
+                st.dataframe(df_invalidi, use_container_width=True)
 
-        df_ris = pd.DataFrame(risultati, columns=["Stato", "Tecnico", "Destinatario"])
-        st.dataframe(df_ris, use_container_width=True)
+            df_ris = pd.DataFrame(risultati, columns=["Stato", "Tecnico", "Destinatario"])
+            st.dataframe(df_ris, use_container_width=True)
 
-    except smtplib.SMTPAuthenticationError as e:
-        st.error(f"Autenticazione fallita: {e}")
-    except Exception as e:
-        st.error(f"Errore durante l'invio: {e}")
-# =========================
-# TABELLA CON LOGICA SEMAFORICA
-# =========================
-def color_semaforo(val):
-    try:
-        v = float(val)
-    except (ValueError, TypeError):
-        return ""
-    if v < 25:
-        return "background-color: #ff4d4d;"   # rosso
-    elif 25 <= v <= 30:
-        return "background-color: #ffff99;"   # giallo
-    else:
-        return "background-color: #b3ffb3;"   # verde
-
-if selezionato != PLACEHOLDER:
-    df_sel = df[df["Tecnico"].astype(str) == str(selezionato)][
-        ["Tecnico", "Ore lavorate", "Avanzamento €/h"]
-    ].copy()
-    styler = (
-        df_sel.style
-        .format({
-            "Ore lavorate": "{:.0f}",
-            "Avanzamento €/h": "€{:.2f}/h",
-        })
-        .applymap(color_semaforo, subset=["Avanzamento €/h"])
-    )
-    st.subheader("Dettaglio")
-    st.table(styler)
+        except smtplib.SMTPAuthenticationError as e:
+            st.error(f"Autenticazione fallita: {e}")
+        except Exception as e:
+            st.error(f"Errore durante l'invio: {e}")
