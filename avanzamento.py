@@ -297,6 +297,7 @@ st.download_button(
     file_name="report_tecnici.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True,
+)
 
 # =========================
 # INVIO EMAIL MANUALE (robusto + diagnostica)
