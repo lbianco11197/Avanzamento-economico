@@ -73,7 +73,7 @@ def set_page_background(image_path: str = "sfondo.png"):
       .stSelectbox div[data-baseweb="select"] {{
         background-color: rgba(255,255,255,0.88) !important;
         border-radius: 10px;
-        border: 1px solid #ddd !important;   /* 👈 bordo grigio chiaro */
+        border: 1px solid #ddd !important;
       }}
 
       .stDataFrame table, .stDataFrame th, .stDataFrame td {{
@@ -257,6 +257,7 @@ def color_semaforo(val):
     else:
         return "background-color: #b3ffb3;"   # verde
 
+df_sel = pd.DataFrame()
 if selezionato != PLACEHOLDER:
     df_sel = df[df["Tecnico"].astype(str) == str(selezionato)][
         ["Tecnico", "Ore lavorate", "Avanzamento €/h"]
@@ -273,31 +274,6 @@ if selezionato != PLACEHOLDER:
     st.table(styler)
 
 st.divider()
-
-# =========================
-# ESPORTA PER MESE (Excel)
-# =========================
-
-# Assumo che 'daily_tbl' (o il df finale che vuoi esportare) sia già stato calcolato
-# nelle righe precedenti come nel tuo file originale. Se il nome è diverso, aggiorna qui.
-
-def _to_excel(df):
-    import io
-    from pandas import ExcelWriter
-    buffer = io.BytesIO()
-    with ExcelWriter(buffer, engine="xlsxwriter") as writer:
-        df.to_excel(writer, index=False, sheet_name="Report")
-        writer.close()
-    buffer.seek(0)
-    return buffer
-
-st.download_button(
-    label="📥 Esporta in Excel",
-    data=_to_excel(df),      # <--- usa qui il tuo dataframe finale
-    file_name="report_tecnici.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True,
-)
 
 # =========================
 # INVIO EMAIL MANUALE (robusto + diagnostica)
@@ -441,3 +417,42 @@ else:
             st.error(f"Autenticazione fallita: {e}")
         except Exception as e:
             st.error(f"Errore durante l'invio: {e}")
+
+# =========================
+# EXPORT (tutti i dati + solo tecnico selezionato)
+# =========================
+st.divider()
+st.subheader("📥 Esporta dati")
+
+def _to_excel(dataframe: pd.DataFrame) -> io.BytesIO:
+    import io as _io
+    from pandas import ExcelWriter
+    buffer = _io.BytesIO()
+    with ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        dataframe.to_excel(writer, index=False, sheet_name="Avanzamento")
+        writer.close()
+    buffer.seek(0)
+    return buffer
+
+col_all, col_one = st.columns(2)
+
+with col_all:
+    st.download_button(
+        label="⬇️ Esporta tutti i dati",
+        data=_to_excel(df),
+        file_name="avanzamento_economico.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
+
+with col_one:
+    if not df_sel.empty and selezionato != PLACEHOLDER:
+        st.download_button(
+            label=f"⬇️ Esporta dati di {selezionato}",
+            data=_to_excel(df_sel),
+            file_name=f"avanzamento_{selezionato}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    else:
+        st.caption("Seleziona un tecnico per abilitare l’export del singolo tecnico.")
