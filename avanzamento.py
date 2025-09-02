@@ -293,7 +293,7 @@ def _to_excel(df):
 
 st.download_button(
     label="📥 Esporta in Excel",
-    data=_to_excel(load_df),      # <--- usa qui il tuo dataframe finale
+    data=_to_excel(df),      # <--- usa qui il tuo dataframe finale
     file_name="report_tecnici.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True,
