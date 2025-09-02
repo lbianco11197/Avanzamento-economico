@@ -277,50 +277,26 @@ st.divider()
 # =========================
 # ESPORTA PER MESE (Excel)
 # =========================
-st.subheader("📤 Esporta per mese")
 
-# UI: mese (1–12 con etichette IT) + anno
-mesi_it = {
-    1:"Gennaio", 2:"Febbraio", 3:"Marzo", 4:"Aprile", 5:"Maggio", 6:"Giugno",
-    7:"Luglio", 8:"Agosto", 9:"Settembre", 10:"Ottobre", 11:"Novembre", 12:"Dicembre"
-}
-c1, c2, c3 = st.columns([1,1,2])
-with c1:
-    sel_mese = st.selectbox("Mese", options=list(mesi_it.keys()),
-                            format_func=lambda m: mesi_it[m])
-with c2:
-    from datetime import datetime as _dt
-    sel_anno = st.number_input("Anno", min_value=2000, max_value=2100,
-                               value=_dt.now().year, step=1)
+# Assumo che 'daily_tbl' (o il df finale che vuoi esportare) sia già stato calcolato
+# nelle righe precedenti come nel tuo file originale. Se il nome è diverso, aggiorna qui.
 
-# Prepara il dataset da esportare filtrando per mese/anno su "Data aggiornamento"
-df_exp = df.copy()
-df_exp["__Data"] = pd.to_datetime(df_exp["Data aggiornamento"], dayfirst=True, errors="coerce")
-mask = (df_exp["__Data"].dt.month == sel_mese) & (df_exp["__Data"].dt.year == sel_anno)
-out_cols = ["Tecnico", "Data aggiornamento", "Ore lavorate", "Avanzamento €/h", "Mail"]
-to_export = df_exp.loc[mask, out_cols].sort_values(["Tecnico"]).reset_index(drop=True)
-
-# Messaggio se vuoto
-if to_export.empty:
-    st.warning(f"Nessun dato per {mesi_it[sel_mese]} {sel_anno}.")
-else:
-    # Genera Excel in memoria
+def _to_excel(df):
     import io
-    bio = io.BytesIO()
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        sheet = f"{mesi_it[sel_mese][:3]}_{sel_anno}"
-        to_export.to_excel(writer, index=False, sheet_name=sheet)
-    bio.seek(0)
+    from pandas import ExcelWriter
+    buffer = io.BytesIO()
+    with ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Report")
+        writer.close()
+    buffer.seek(0)
+    return buffer
 
-    # Download
-    fname = f"Avanzamento_{sel_anno}_{sel_mese:02d}.xlsx"
-    st.download_button(
-        label=f"⬇️ Scarica Excel {mesi_it[sel_mese]} {sel_anno}",
-        data=bio,
-        file_name=fname,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+st.download_button(
+    label="📥 Esporta in Excel",
+    data=_to_excel(daily_tbl),      # <--- usa qui il tuo dataframe finale
+    file_name="report_tecnici.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True,
 
 # =========================
 # INVIO EMAIL MANUALE (robusto + diagnostica)
