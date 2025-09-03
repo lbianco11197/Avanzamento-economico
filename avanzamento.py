@@ -424,13 +424,13 @@ else:
 st.divider()
 st.subheader("📥 Esporta dati")
 
-def _to_excel(dataframe: pd.DataFrame) -> io.BytesIO:
-    import io as _io
+def _to_excel(dataframe):
+    import io
     from pandas import ExcelWriter
-    buffer = _io.BytesIO()
-    with ExcelWriter(buffer, engine="xlsxwriter") as writer:
+    buffer = io.BytesIO()
+    # usa openpyxl al posto di xlsxwriter
+    with ExcelWriter(buffer, engine="openpyxl") as writer:
         dataframe.to_excel(writer, index=False, sheet_name="Avanzamento")
-        writer.close()
     buffer.seek(0)
     return buffer
 
