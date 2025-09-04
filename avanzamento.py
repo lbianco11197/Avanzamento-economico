@@ -1,4 +1,4 @@
-# app.py — Avanzamento: lettura da GitHub + filtro mese globale + invio email per mese scelto
+# app.py — Avanzamento: GitHub + filtro mese globale + filtro tecnico + invio mese scelto
 import io
 import os
 import time
@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from pandas import ExcelWriter
 
 # =========================
-# CONFIG (come nel vecchio .py)
+# CONFIG (coerente con il tuo .py precedente)
 # =========================
 REPO_OWNER = "lbianco11197"
 REPO_NAME  = "Avanzamento-economico"
@@ -22,13 +22,13 @@ XLSX_PATH  = "Avanzamento.xlsx"      # percorso nel repo
 SHEET_NAME = ""                      # "" => primo foglio
 PAGE_TITLE = "Avanzamento mensile €/h per Tecnico - Euroirte s.r.l."
 
-# GitHub token (opzionale, per rate limit migliori)
+# GitHub token (opzionale, per rate-limit migliori)
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", os.getenv("GITHUB_TOKEN"))
 
 API_URL     = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{XLSX_PATH}"
 COMMITS_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/commits"
 
-# SMTP (come nel vecchio .py)
+# SMTP (come nel vecchio script)
 SMTP_HOST    = "mail.euroirte.it"
 MAIL_SUBJECT = "EUROIRTE - Avanzamento Economico"
 SMTP_USER    = str(st.secrets["SMTP_USER"]).strip()
@@ -36,11 +36,40 @@ SMTP_PASS    = str(st.secrets["SMTP_PASS"]).strip()
 SMTP_FROM    = str(st.secrets.get("SMTP_FROM", SMTP_USER)).strip()
 EMAIL_RE     = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+# Mesi in italiano
+MESI_IT = ["", "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+           "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"]
+
 # =========================
-# PAGE SETUP
+# PAGE
 # =========================
 st.set_page_config(layout="wide", page_title=PAGE_TITLE, page_icon=":bar_chart:")
 st.title(f"📊 {PAGE_TITLE}")
+
+# --- STILE: bordi grigio chiaro per select/menu/input ---
+st.markdown("""
+<style>
+  /* Contenitori input/table */
+  .stTextInput, .stNumberInput, .stDateInput, .stMultiSelect, .stRadio,
+  .stCheckbox, .stSlider, .stFileUploader, .stTextArea, .stSelectbox {
+    background-color: rgba(255,255,255,0.88) !important;
+    border-radius: 10px !important;
+    border: 1px solid #ddd !important;
+  }
+  /* Selectbox (menu a tendina) con bordo #ddd */
+  .stSelectbox div[data-baseweb="select"] {
+    background-color: rgba(255,255,255,0.88) !important;
+    border-radius: 10px !important;
+    border: 1px solid #ddd !important;
+  }
+  /* Multiselect coerente */
+  .stMultiSelect div[data-baseweb="select"] {
+    background-color: rgba(255,255,255,0.88) !important;
+    border-radius: 10px !important;
+    border: 1px solid #ddd !important;
+  }
+</style>
+""", unsafe_allow_html=True)
 
 # =========================
 # HELPERS: GitHub fetch
@@ -76,8 +105,7 @@ def fetch_excel_bytes_via_api():
                 last_human = iso
 
     # contenuto inline (base64) oppure download_url
-    content = j.get("content")
-    encoding = j.get("encoding")
+    content = j.get("content"); encoding = j.get("encoding")
     if content and encoding == "base64":
         data = base64.b64decode(content)
         return j.get("sha") or str(int(time.time())), data, last_human
@@ -92,9 +120,13 @@ def fetch_excel_bytes_via_api():
 
 def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
     """
-    Parsa l'Excel (valori calcolati) e mantiene le colonne:
-    Tecnico, Data aggiornamento, Ore lavorate, Avanzamento €/h, Mail.
-    - Manteniamo sia datetime che stringa formattata per email.
+    Parsa l'Excel (valori calcolati) e mantiene:
+    - 'Tecnico' (str ripulito)
+    - 'Data aggiornamento' (datetime per calcoli)
+    - 'Data Aggiornamento' (stringa gg/mm/aaaa per tabella/email)
+    - 'Ore lavorate' (float)
+    - 'Avanzamento €/h' (float, 2 decimali in visualizzazione)
+    - 'Mail' (str)
     """
     bio = io.BytesIO(xls_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
@@ -102,7 +134,9 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
 
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
-        return pd.DataFrame(columns=["Tecnico","Data aggiornamento","Ore lavorate","Avanzamento €/h","Mail"])
+        return pd.DataFrame(columns=[
+            "Tecnico","Data aggiornamento","Data Aggiornamento","Ore lavorate","Avanzamento €/h","Mail"
+        ])
 
     header = [str(h).strip() if h is not None else "" for h in rows[0]]
     df = pd.DataFrame(rows[1:], columns=header)
@@ -132,9 +166,10 @@ def load_avanzamento_df_from_bytes(xls_bytes: bytes) -> pd.DataFrame:
     # tipi
     df["Ore lavorate"] = pd.to_numeric(df["Ore lavorate"], errors="coerce")
     df["Avanzamento €/h"] = pd.to_numeric(df["Avanzamento €/h"], errors="coerce")
-    # >>> DIFFERENZA rispetto al vecchio: manteniamo datetime + stringa
+
+    # datetime per calcoli + stringa per mostrata
     df["Data aggiornamento"] = pd.to_datetime(df["Data aggiornamento"], errors="coerce", dayfirst=True)
-    df["Data aggiornamento_str"] = df["Data aggiornamento"].dt.strftime("%d/%m/%Y")
+    df["Data Aggiornamento"] = df["Data aggiornamento"].dt.strftime("%d/%m/%Y")
 
     # pulizia tecnici
     df = df.dropna(how="all")
@@ -165,10 +200,16 @@ if last_update_date:
     st.caption(f"📅 Dati aggiornati al {last_update_date}")
 
 # =========================
-# MESE GLOBALE
+# MESE GLOBALE (mostra nomi mese)
 # =========================
 df["Mese"] = df["Data aggiornamento"].dt.to_period("M").dt.to_timestamp()
-df_all = df.copy()  # copia completa (serve per l'invio mese)
+
+def nome_mese_it(ts: pd.Timestamp) -> str:
+    # es. Timestamp('2025-08-01') -> "Agosto"
+    if pd.isna(ts):
+        return ""
+    return MESI_IT[int(ts.month)]
+
 mesi_disponibili = sorted(df["Mese"].dropna().unique())
 if not mesi_disponibili:
     st.warning("Nessuna data valida trovata.")
@@ -180,7 +221,7 @@ with col_mese:
         "📅 Scegli il mese (filtro globale)",
         mesi_disponibili,
         index=len(mesi_disponibili)-1,
-        format_func=lambda x: x.strftime("%m/%Y"),
+        format_func=nome_mese_it,   # <<< NOME MESE
         key="mese_globale"
     )
 with col_toggle:
@@ -190,14 +231,50 @@ if not mostra_tutti:
     df = df[df["Mese"] == mese_scelto].copy()
 
 # =========================
-# TABELLINA DI CONTESTO (opzionale)
+# FILTRO SINGOLO TECNICO
 # =========================
-st.subheader("📋 Dati correnti (dopo filtro globale)")
-preview_cols = ["Tecnico", "Data aggiornamento_str", "Ore lavorate", "Avanzamento €/h", "Mail"]
-st.dataframe(df[preview_cols], use_container_width=True, hide_index=True)
+st.divider()
+st.subheader("🔎 Filtri")
+tecnici = sorted(df["Tecnico"].dropna().unique().tolist())
+opzioni_tec = ["— Tutti i tecnici —"] + tecnici
+tec_scelto = st.selectbox("Tecnico", opzioni_tec, index=0)
+
+if tec_scelto != "— Tutti i tecnici —":
+    df = df[df["Tecnico"] == tec_scelto].copy()
 
 # =========================
-# EXPORT di cortesia
+# TABELLINA CON LOGICA SEMAFORICA (€/h 2 decimali)
+# =========================
+st.subheader("📋 Dati correnti")
+def style_semaforo(val):
+    """Rosso <30, Giallo 30–35, Verde >35."""
+    try:
+        v = float(val)
+    except (ValueError, TypeError):
+        return ""
+    if v < 30:
+        return "background-color: #ff4d4d;"   # rosso
+    elif 30 <= v <= 35:
+        return "background-color: #ffff99;"   # giallo
+    else:
+        return "background-color: #b3ffb3;"   # verde
+
+preview_cols = ["Tecnico", "Data Aggiornamento", "Ore lavorate", "Avanzamento €/h", "Mail"]
+df_preview = df[preview_cols].copy()
+
+styler = (
+    df_preview.style
+    .format({
+        "Ore lavorate": "{:.0f}",
+        "Avanzamento €/h": "€{:.2f}/h",   # <<< due decimali
+    })
+    .applymap(style_semaforo, subset=["Avanzamento €/h"])  # <<< semaforo su €/h
+)
+
+st.table(styler)  # st.table preserva lo Styler (st.dataframe lo ignora)
+
+# =========================
+# EXPORT vista corrente (facoltativo)
 # =========================
 def _to_excel_bytes(frame: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
@@ -208,14 +285,14 @@ def _to_excel_bytes(frame: pd.DataFrame) -> bytes:
 
 st.download_button(
     "⬇️ Esporta vista corrente (xlsx)",
-    data=_to_excel_bytes(df[preview_cols]),
+    data=_to_excel_bytes(df_preview),
     file_name="avanzamento_corrente.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     use_container_width=True
 )
 
 # =========================
-# SMTP: TEST CONNESSIONE
+# SMTP: TEST CONNESSIONE (come prima)
 # =========================
 st.divider()
 st.subheader("🔍 Test connessione SMTP")
@@ -242,23 +319,29 @@ if st.button("Esegui test SMTP"):
     (st.success if ok else st.error)(msg)
 
 # =========================
-# INVIO EMAIL — SCELTA MESE DA INVIARE
+# INVIO EMAIL — SCELTA MESE (solo dati di quel mese, ignorando filtri attuali)
 # =========================
 st.divider()
-st.subheader("📧 Invia email (solo mese selezionato)")
+st.subheader("📧 Invia email")
 
+# per l'invio usiamo l'intero dataset (no filtri), ma mostriamo i mesi con nome
+# ricarichiamo dalla stessa sorgente per essere certi di non avere filtri pendenti
+_, xls_bytes_for_email, _ = fetch_excel_bytes_via_api()
+df_all = load_avanzamento_df_from_bytes(xls_bytes_for_email)
+df_all["Mese"] = df_all["Data aggiornamento"].dt.to_period("M").dt.to_timestamp()
 mesi_email = sorted(df_all["Mese"].dropna().unique(), reverse=True)
-# default = mese globale se presente
+
+# default = mese globale
 default_idx = mesi_email.index(mese_scelto) if mese_scelto in mesi_email else 0
 mese_email = st.selectbox(
     "Mese da inviare",
     mesi_email,
     index=default_idx,
-    format_func=lambda x: x.strftime("%m/%Y"),
+    format_func=lambda x: nome_mese_it(x),   # nome mese
     key="mese_da_inviare"
 )
 
-if st.button("✉️ Invia email per il mese scelto"):
+if st.button("✉️ Invia email per il mese selezionato"):
     df_email = df_all[df_all["Mese"] == mese_email].copy()
     if df_email.empty:
         st.warning("Nessun dato per il mese selezionato.")
@@ -285,15 +368,17 @@ if st.button("✉️ Invia email per il mese scelto"):
                     invalidi.append((nome, to))
                     continue
 
-                data  = r.get("Data aggiornamento_str", "")
+                data  = r.get("Data Aggiornamento", "")
                 avanz = float(pd.to_numeric(r.get("Avanzamento €/h"), errors="coerce") or 0)
                 ore   = float(pd.to_numeric(r.get("Ore lavorate"), errors="coerce") or 0)
 
+                # corpo con €/h a 2 decimali
                 corpo = (
                     f"Ciao {nome},\n\n"
                     f"il tuo avanzamento economico aggiornato al {data} è di {avanz:.2f} €/h "
                     f"e il totale delle ore lavorate è {ore:.0f}.\n"
                 )
+
                 msg = MIMEText(corpo, "plain", "utf-8")
                 msg["Subject"] = MAIL_SUBJECT
                 msg["From"] = SMTP_FROM
