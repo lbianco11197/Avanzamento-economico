@@ -49,20 +49,15 @@ st.title(f"📊 {PAGE_TITLE}")
 # --- STILE: bordi grigio chiaro per select/menu/input ---
 st.markdown("""
 <style>
-  /* Contenitori input/table */
-  .stTextInput, .stNumberInput, .stDateInput, .stMultiSelect, .stRadio,
-  .stCheckbox, .stSlider, .stFileUploader, .stTextArea, .stSelectbox {
-    background-color: rgba(255,255,255,0.88) !important;
-    border-radius: 10px !important;
-    border: 1px solid #ddd !important;
+  /* Rimuovi bordi da tutti i contenitori/input */
+  .stTextInput, .stNumberInput, .stDateInput, .stRadio,
+  .stCheckbox, .stSlider, .stFileUploader, .stTextArea {
+    border: none !important;
+    box-shadow: none !important;
   }
-  /* Selectbox (menu a tendina) con bordo #ddd */
-  .stSelectbox div[data-baseweb="select"] {
-    background-color: rgba(255,255,255,0.88) !important;
-    border-radius: 10px !important;
-    border: 1px solid #ddd !important;
-  }
-  /* Multiselect coerente */
+
+  /* Mantieni bordo grigio chiaro SOLO sui menu a tendina */
+  .stSelectbox div[data-baseweb="select"],
   .stMultiSelect div[data-baseweb="select"] {
     background-color: rgba(255,255,255,0.88) !important;
     border-radius: 10px !important;
@@ -218,7 +213,7 @@ if not mesi_disponibili:
 col_mese, col_toggle = st.columns([3, 2])
 with col_mese:
     mese_scelto = st.selectbox(
-        "📅 Scegli il mese (filtro globale)",
+        "📅 Scegli il mese",
         mesi_disponibili,
         index=len(mesi_disponibili)-1,
         format_func=nome_mese_it,   # <<< NOME MESE
