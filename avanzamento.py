@@ -263,7 +263,7 @@ styler = (
         "Ore lavorate": "{:.0f}",
         "Avanzamento €/h": "€{:.2f}/h",   # <<< due decimali
     })
-    .applymap(style_semaforo, subset=["Avanzamento €/h"])  # <<< semaforo su €/h
+    .map(style_semaforo, subset=["Avanzamento €/h"])  # <<< semaforo su €/h
 )
 
 st.table(styler)  # st.table preserva lo Styler (st.dataframe lo ignora)
